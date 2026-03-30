@@ -1,0 +1,10 @@
+{
+  "question": "Which employee has certificates for aircrafts that have the highest average flying distance?",
+  "sub_questions": [
+    "What are the average flying distances of the different aircrafts?",
+    "Which employees have certificates for these aircrafts?",
+    "Which aircraft has the highest average flying distance?",
+    "Which employee is associated with the aircraft that has the highest average flying distance?"
+  ],
+  "timestamp": 1774862848.191126
+}

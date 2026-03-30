@@ -1,0 +1,9 @@
+{
+  "question": "List the names of students who have registered for both Statistics and English courses.",
+  "sub_questions": [
+    "What are the names of students who have registered for the Statistics course?",
+    "What are the names of students who have registered for the English course?",
+    "Which students are common in both lists of registered students for Statistics and English courses?"
+  ],
+  "timestamp": 1774862850.5329823
+}
