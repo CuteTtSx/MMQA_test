@@ -35,11 +35,11 @@ def load_qa_data(qa_file: str, num_questions: int = None) -> List[Dict]:
 
 def main():
     print("[INFO] 加载QA数据...")
-    qa_data = load_qa_data("data/QA_SQL_three_table.json", num_questions=200)
+    qa_data = load_qa_data("data/QA_SQL_three_table.json", num_questions=721)
     print(f"[OK] 加载了 {len(qa_data)} 条问题\n")
     
     # 测试不同的top_k_per_round值
-    top_k_per_round_values = [2, 5, 10]
+    top_k_per_round_values = [2, 3, 5, 10]
     final_top_k = 3  # 最终返回的表数量
     all_reports = {}
     
@@ -62,9 +62,9 @@ def main():
         for idx, item in enumerate(qa_data, 1):
             question_id = item.get("id")
             question = item.get("question")
-            ground_truth_tables = item.get("table_names", [])
+            ground_truth_tables = item.get("table_ids", [])
             
-            if idx % 10 == 0:
+            if idx % 50 == 0:
                 print(f"  [{idx}/{len(qa_data)}] 处理中...")
             
             # 执行MTR检索，最终返回top_k=3张表

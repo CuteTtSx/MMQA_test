@@ -25,7 +25,7 @@ def load_test_questions(num_questions: int = 5) -> List[Dict]:
                 test_questions.append({
                     "id": item.get("id"),
                     "question": item.get("question"),
-                    "ground_truth_tables": item.get("table_names", [])
+                    "ground_truth_tables": item.get("table_ids", [])
                 })
     
     return test_questions

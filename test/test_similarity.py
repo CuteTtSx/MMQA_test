@@ -135,7 +135,7 @@ def main():
                 test_questions.append({
                     "id": item.get("id"),
                     "question": item.get("question"),
-                    "table_names": item.get("table_names", [])  # 真实答案（用于验证）, 生成唯一id后的表名
+                    "table_ids": item.get("table_ids", [])  # 真实答案（用于验证）, 生成唯一id后的表名
                 })
     
     print(f"[OK] 加载了 {len(test_questions)} 条测试问题\n")
@@ -147,7 +147,7 @@ def main():
     for idx, item in enumerate(test_questions, 1):
         question_id = item["id"]
         question = item["question"]
-        ground_truth_tables = item["table_names"]
+        ground_truth_tables = item["table_ids"]
         
         print(f"\n[问题 {idx}] ID: {question_id}")
         print(f"问题: {question[:70]}{'...' if len(question) > 70 else ''}")

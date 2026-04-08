@@ -62,13 +62,13 @@ class RetrievalEvaluatorV2:
         Returns:
             RetrievalMetricsV2对象
         """
-        retrieved_ids = [t["table_id"] for t in retrieved_tables]
+        retrieved_ids = [t["table_id"] for t in retrieved_tables] # 唯一表id
         top_k = len(retrieved_ids)
         retrieved_ids_set = set(retrieved_ids)
         
         # 计算基础指标
         matched = len(retrieved_ids_set & ground_truth_tables)
-        gt_count = len(ground_truth_tables)
+        gt_count = len(ground_truth_tables) if top_k >= len(ground_truth_tables) else top_k
         
         # Recall@K
         recall = matched / gt_count if gt_count > 0 else 0.0

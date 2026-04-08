@@ -110,7 +110,7 @@ class MultiTableRetriever:
         similarities = {}
         
         for pool_key, table_data in self.table_pool.items():
-            table_schema = self._convert_pool_table_to_schema(pool_key, table_data)
+            table_schema = self._convert_pool_table_to_schema(pool_key, table_data) # 计算相似度table_schema内要使用原始表名
             similarity = self.similarity_calculator.compute_question_table_similarity(
                 question, table_schema
             )
@@ -303,7 +303,7 @@ class MultiTableRetriever:
             if table_data:
                 result = {
                     "rank": rank + 1,
-                    "table_id": table_id,
+                    "table_id": table_id, # 表唯一id
                     "table_name": table_data.get("original_table_name", ""),
                     "columns": table_data.get("columns", []),
                     "relevance_score": float(score),

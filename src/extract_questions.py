@@ -47,7 +47,8 @@ def extract_questions_from_file(input_file: str, output_file: str) -> Dict[str, 
                 "id": item.get("id_"),
                 "question": item.get("Question"),
                 "sql": item.get("SQL"),
-                "table_names": unique_table_ids,
+                "table_ids": unique_table_ids, 
+                "table_names": table_names,
                 "ans": item.get("answer"),
             }
             questions.append(question_info)
@@ -75,6 +76,7 @@ def extract_questions_from_file(input_file: str, output_file: str) -> Dict[str, 
     except Exception as e:
         print(f"[ERROR] 提取过程出错: {e}")
         return {"status": "error", "message": str(e)}
+        
 def main():
     """主函数：提取两个数据文件的问题"""
     

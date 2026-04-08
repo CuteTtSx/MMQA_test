@@ -185,7 +185,7 @@ Please decompose the given question into sub-questions. Output ONLY valid JSON i
         # 检查缓存
         cached_result = self._load_from_cache(question)
         if cached_result:
-            print(f"[CACHE HIT] Loaded from cache")
+            # print(f"[CACHE HIT] Loaded from cache")
             return cached_result
         
         # 重试逻辑

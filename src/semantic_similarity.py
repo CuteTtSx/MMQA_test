@@ -193,7 +193,7 @@ class SemanticSimilarityCalculator:
             has_strong_link = True
 
         # 【评分策略】如果主外键严丝合缝，给予极高的权重 1.0。如果是孤岛表，直接惩罚到 0.1
-        return 1.0 if has_strong_link else 0.1
+        return 1.0 if has_strong_link else 0
 
     def compute_table_relationship_score1(self, table1: Dict, table2: Dict) -> float:
         """
