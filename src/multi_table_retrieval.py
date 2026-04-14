@@ -1,7 +1,6 @@
 """多表检索(MTR)核心算法模块。"""
 
 import json
-import re
 from typing import Dict, List, Optional
 
 from src.question_decomposer import QuestionDecomposer
@@ -56,29 +55,9 @@ class MultiTableRetriever:
         self.use_propagation = use_propagation
         self.retrieval_mode = retrieval_mode
         self._relationship_cache = {}
-        self.hybrid_trigger_phrases = [
-            "both",
-            "along with",
-            "for which",
-            "highest",
-            "lowest",
-            "earliest",
-            "latest",
-            "temporary acting",
-        ]
-        self.hybrid_trigger_keywords = {
-            "author",
-            "authors",
-            "paper",
-            "papers",
-            "aircraft",
-            "aircrafts",
-            "certified",
-            "certificate",
-            "certificates",
-            "journal",
-            "editor",
-        }
+        self.hybrid_uncertainty_top_k = 3
+        self.hybrid_gap12_threshold = 0.015
+        self.hybrid_gap13_threshold = 0.03
 
         print(f"[OK] MTR检索器初始化完成 (表池: {len(self.table_pool)} 张表, mode={self.retrieval_mode})")
 
@@ -167,23 +146,38 @@ class MultiTableRetriever:
                 print(f"      {i}. {sq[:60]}...")
         return sub_questions
 
+    def _compute_aggregated_question_table_scores(self, questions: List[str]) -> Dict[str, float]:
+        table_scores = {}
+        for sub_q in questions:
+            similarities = self._compute_question_table_similarities(sub_q)
+            for table_id, score in similarities.items():
+                table_scores[table_id] = table_scores.get(table_id, 0.0) + score
+        for table_id in table_scores:
+            table_scores[table_id] /= len(questions)
+        return table_scores
+
     def _should_use_hybrid_propagation(self, question: str, verbose: bool) -> bool:
-        lower_question = question.lower()
+        semantic_scores = self._compute_aggregated_question_table_scores([question])
+        ranked_scores = sorted(semantic_scores.items(), key=lambda x: x[1], reverse=True)
+        top_scores = [score for _, score in ranked_scores[: self.hybrid_uncertainty_top_k]]
 
-        if any(phrase in lower_question for phrase in self.hybrid_trigger_phrases):
+        if len(top_scores) < 3:
             if verbose:
-                print("[MTR-hybrid] 命中短语规则，启用关系传播")
-            return True
+                print("[MTR-hybrid] 候选表不足，退回纯语义检索")
+            return False
 
-        tokens = set(re.findall(r"[a-zA-Z_]+", lower_question))
-        if tokens & self.hybrid_trigger_keywords:
-            if verbose:
-                print("[MTR-hybrid] 命中关键词规则，启用关系传播")
-            return True
+        gap12 = top_scores[0] - top_scores[1]
+        gap13 = top_scores[0] - top_scores[2]
+        should_propagate = gap12 <= self.hybrid_gap12_threshold or gap13 <= self.hybrid_gap13_threshold
 
         if verbose:
-            print("[MTR-hybrid] 未命中规则，退回纯语义检索")
-        return False
+            print(
+                f"[MTR-hybrid] 纯语义不确定性: top1-top2={gap12:.4f}, top1-top3={gap13:.4f}, "
+                f"thresholds=({self.hybrid_gap12_threshold:.4f}, {self.hybrid_gap13_threshold:.4f})"
+            )
+            print("[MTR-hybrid] 判定: 启用关系传播" if should_propagate else "[MTR-hybrid] 判定: 保持纯语义检索")
+
+        return should_propagate
 
     def _get_table_data_by_id(self, table_id: str):
         for pool_key, data in self.table_pool.items():
@@ -219,13 +213,7 @@ class MultiTableRetriever:
             print("[MTR] 步骤2: 第一轮检索 (问题-表相似度)...")
 
         # 1. 计算问题-表相似度: 计算每个表在所有子问题上的平均得分
-        table_scores = {}
-        for sub_q in sub_questions:
-            similarities = self._compute_question_table_similarities(sub_q)
-            for table_id, score in similarities.items():
-                table_scores[table_id] = table_scores.get(table_id, 0.0) + score
-        for table_id in table_scores:
-            table_scores[table_id] /= len(sub_questions)
+        table_scores = self._compute_aggregated_question_table_scores(sub_questions)
         # 选择Top-K候选表
         current_tables = dict(sorted(table_scores.items(), key=lambda x: x[1], reverse=True)[: self.top_k_per_round])
         if verbose:
