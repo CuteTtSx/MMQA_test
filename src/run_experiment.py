@@ -29,7 +29,7 @@ def parse_args():
 
     # 通用参数
     parser.add_argument("--limit", type=int, default=0)
-    parser.add_argument("--model_name", type=str, default="")
+    parser.add_argument("--model_name", type=str, default="gpt-4o-mini")
     parser.add_argument("--output_file", type=str, default="")
     parser.add_argument("--fp16", action="store_true")
     parser.add_argument("--bf16", action="store_true")
@@ -75,6 +75,8 @@ def build_retrieval_command(args):
         args.experiment_type,
         "--num_iterations",
         str(args.num_iterations),
+        "--model_name",
+        str(args.model_name),
     ]
     append_if_present(command, "--limit", args.limit)
     append_if_present(command, "--output_file", args.output_file)

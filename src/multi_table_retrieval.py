@@ -55,9 +55,8 @@ class MultiTableRetriever:
         self.use_propagation = use_propagation
         self.retrieval_mode = retrieval_mode
         self._relationship_cache = {}
-        self.hybrid_uncertainty_top_k = 3
-        self.hybrid_gap12_threshold = 0.015
-        self.hybrid_gap13_threshold = 0.03
+        self.hybrid_rerank_alpha = 0.8
+        self.hybrid_rerank_beta = 0.2
 
         print(f"[OK] MTR检索器初始化完成 (表池: {len(self.table_pool)} 张表, mode={self.retrieval_mode})")
 
@@ -155,29 +154,6 @@ class MultiTableRetriever:
         for table_id in table_scores:
             table_scores[table_id] /= len(questions)
         return table_scores
-
-    def _should_use_hybrid_propagation(self, question: str, verbose: bool) -> bool:
-        semantic_scores = self._compute_aggregated_question_table_scores([question])
-        ranked_scores = sorted(semantic_scores.items(), key=lambda x: x[1], reverse=True)
-        top_scores = [score for _, score in ranked_scores[: self.hybrid_uncertainty_top_k]]
-
-        if len(top_scores) < 3:
-            if verbose:
-                print("[MTR-hybrid] 候选表不足，退回纯语义检索")
-            return False
-
-        gap12 = top_scores[0] - top_scores[1]
-        gap13 = top_scores[0] - top_scores[2]
-        should_propagate = gap12 <= self.hybrid_gap12_threshold or gap13 <= self.hybrid_gap13_threshold
-
-        if verbose:
-            print(
-                f"[MTR-hybrid] 纯语义不确定性: top1-top2={gap12:.4f}, top1-top3={gap13:.4f}, "
-                f"thresholds=({self.hybrid_gap12_threshold:.4f}, {self.hybrid_gap13_threshold:.4f})"
-            )
-            print("[MTR-hybrid] 判定: 启用关系传播" if should_propagate else "[MTR-hybrid] 判定: 保持纯语义检索")
-
-        return should_propagate
 
     def _get_table_data_by_id(self, table_id: str):
         for pool_key, data in self.table_pool.items():
@@ -310,18 +286,48 @@ class MultiTableRetriever:
         return self._format_final_results(current_tables, top_k, retrieval_round, verbose)
 
     def _retrieve_hybrid_mode(self, question: str, top_k: int, verbose: bool) -> List[Dict]:
-        original_use_decomposition = self.use_decomposition
-        original_use_propagation = self.use_propagation
+        if verbose:
+            print("[MTR-hybrid] 使用 E1 候选 + propagation rerank")
 
-        should_propagate = self._should_use_hybrid_propagation(question, verbose)
-        self.use_decomposition = should_propagate
-        self.use_propagation = should_propagate
+        baseline_scores = self._compute_aggregated_question_table_scores([question])
+        candidate_tables = dict(sorted(baseline_scores.items(), key=lambda x: x[1], reverse=True)[: self.top_k_per_round])
 
-        try:
-            return self._retrieve_current_mode(question, top_k, verbose)
-        finally:
-            self.use_decomposition = original_use_decomposition
-            self.use_propagation = original_use_propagation
+        if verbose:
+            print(f"[MTR-hybrid] E1 候选表数: {len(candidate_tables)}")
+
+        sub_questions = self.decomposer.decompose(question) if self.use_decomposition else [question]
+        if not sub_questions:
+            sub_questions = [question]
+
+        rerank_scores = dict(candidate_tables)
+        if self.use_propagation and self.num_iterations > 1:
+            for iteration in range(1, self.num_iterations):
+                if verbose:
+                    print(f"[MTR-hybrid] 第{iteration + 1}轮候选内传播重排")
+                propagated_scores = {table_id: 0.0 for table_id in candidate_tables}
+                for sub_q in sub_questions:
+                    similarities = self._compute_question_table_similarities(sub_q)
+                    for table_j_id in candidate_tables:
+                        alpha = similarities.get(table_j_id, 0.0)
+                        max_beta = 0.1
+                        for table_k_id in rerank_scores:
+                            beta = self._compute_table_relationship_score(table_k_id, table_j_id)
+                            if beta > max_beta:
+                                max_beta = beta
+                        propagated_scores[table_j_id] += alpha * max_beta
+                for table_id in propagated_scores:
+                    propagated_scores[table_id] /= len(sub_questions)
+                    propagated_scores[table_id] = (
+                        self.hybrid_rerank_alpha * candidate_tables[table_id]
+                        + self.hybrid_rerank_beta * propagated_scores[table_id]
+                    )
+                rerank_scores = dict(sorted(propagated_scores.items(), key=lambda x: x[1], reverse=True)[: self.top_k_per_round])
+        else:
+            if verbose:
+                print("[MTR-hybrid] 跳过传播，直接返回 E1 候选")
+
+        retrieval_round = self.num_iterations if (self.use_propagation and self.num_iterations > 1) else 1
+        return self._format_final_results(rerank_scores, top_k, retrieval_round, verbose)
 
     def retrieve(self, question: str, top_k: int = 5, verbose: bool = False) -> List[Dict]:
         if verbose:

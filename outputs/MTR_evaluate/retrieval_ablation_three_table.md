@@ -5,7 +5,7 @@
 - `E2` 相对 `E1`：Recall -0.0240，MRR -0.0268
 - `E3` 相对 `E1`：Recall -0.0328，MRR -0.0707
 - `E3_PAPER` 相对 `E1`：Recall -0.2339，MRR -0.2957
-- `E4_HYBRID` 相对 `E1`：Recall -0.0143，MRR -0.0287
+- `E4_HYBRID` 相对 `E1`：Recall +0.0000，MRR -0.0007
 
 ## 二、最佳指标
 
@@ -21,7 +21,7 @@
 | E2 | 分解 + 纯语义 | 是 | 否 | 0.4840 | 0.4840 | 0.4840 | 0.7464 | 0.4319 | 1.2666 | 1.4521 |
 | E3 | 完整 MTR | 是 | 是 | 0.4753 | 0.4753 | 0.4753 | 0.7025 | 0.4227 | 1.3038 | 1.4258 |
 | E3_PAPER | 完整 MTR（paper-like） | 是 | 是 | 0.2742 | 0.2742 | 0.2742 | 0.4776 | 0.2294 | 1.4145 | 0.8225 |
-| E4_HYBRID | Hybrid：选择性关系传播 | 是 | 是 | 0.4938 | 0.4938 | 0.4938 | 0.7446 | 0.4429 | 1.2437 | 1.4813 |
+| E4_HYBRID | Hybrid：选择性关系传播 | 是 | 是 | 0.5081 | 0.5081 | 0.5081 | 0.7725 | 0.4483 | 1.2825 | 1.5243 |
 
 ## 四、逐题对比汇总（相对 E1）
 
@@ -30,7 +30,7 @@
 | E2 | 97 | 147 | 477 | -0.0240 | -0.0268 | -0.0721 |
 | E3 | 105 | 167 | 449 | -0.0328 | -0.0707 | -0.0985 |
 | E3_PAPER | 59 | 429 | 233 | -0.2339 | -0.2957 | -0.7018 |
-| E4_HYBRID | 75 | 108 | 538 | -0.0143 | -0.0287 | -0.0430 |
+| E4_HYBRID | 0 | 0 | 721 | 0.0000 | -0.0007 | 0.0000 |
 
 ## 五、E2 相对 E1 的错误类型分析
 
@@ -379,115 +379,42 @@
 
 ## 五、E4_HYBRID 相对 E1 的错误类型分析
 
-- 改善题数：75
-- 退化题数：108
-- 持平题数：538
-- 平均 Recall 变化：-0.0143
-- 平均 MRR 变化：-0.0287
-- 平均命中表数变化：-0.0430
+- 改善题数：0
+- 退化题数：0
+- 持平题数：721
+- 平均 Recall 变化：0.0000
+- 平均 MRR 变化：-0.0007
+- 平均命中表数变化：0.0000
 
 ### 命中表数转移矩阵
 
 | 命中表数转移 | 题数 |
 | --- | --- |
-| 2 -> 2 | 232 |
-| 1 -> 1 | 167 |
-| 3 -> 3 | 74 |
-| 0 -> 0 | 65 |
-| 1 -> 0 | 51 |
-| 1 -> 2 | 34 |
-| 2 -> 1 | 29 |
-| 0 -> 1 | 16 |
-| 3 -> 2 | 16 |
-| 2 -> 3 | 14 |
-| 2 -> 0 | 10 |
-| 0 -> 2 | 7 |
-| 0 -> 3 | 3 |
-| 3 -> 1 | 2 |
-| 1 -> 3 | 1 |
+| 2 -> 2 | 285 |
+| 1 -> 1 | 253 |
+| 3 -> 3 | 92 |
+| 0 -> 0 | 91 |
 
 ### 改善题中的高频短语模式
 
-| 模式 / 关键词 | 次数 |
-| --- | --- |
-| highest | 10 |
-| greater than | 6 |
-| both | 3 |
-| who have | 3 |
-| along with | 2 |
-| currently | 2 |
-| earliest | 1 |
-| for which | 1 |
-| at least | 1 |
-| who has | 1 |
+- 无
 
 ### 退化题中的高频短语模式
 
-| 模式 / 关键词 | 次数 |
-| --- | --- |
-| who have | 7 |
-| highest | 6 |
-| greater than | 5 |
-| along with | 5 |
-| at least | 3 |
-| both | 2 |
-| ordered by | 1 |
-| who has | 1 |
-| for which | 1 |
-| at most | 1 |
+- 无
 
 ### 改善题中的高频关键词
 
-| 模式 / 关键词 | 次数 |
-| --- | --- |
-| paper | 12 |
-| titled | 11 |
-| highest | 10 |
-| average | 10 |
-| author | 10 |
-| students | 9 |
-| orders | 8 |
-| functional | 8 |
-| pearl | 8 |
-| modular | 8 |
+- 无
 
 ### 退化题中的高频关键词
 
-| 模式 / 关键词 | 次数 |
-| --- | --- |
-| students | 36 |
-| city | 24 |
-| code | 18 |
-| first | 17 |
-| last | 17 |
-| grade | 14 |
-| number | 13 |
-| average | 13 |
-| course | 13 |
-| bal | 11 |
+- 无
 
 ### 代表性改善样例
 
-- Q210: Who is the primary author of the paper titled 'Functional Pearl: Modular Rollback through Control Logging'? | 命中表数 0 -> 3 | Recall 0.0000 -> 1.0000 | MRR 0.0000 -> 1.0000
-- Q211: Who is the first-listed author of the paper titled 'Functional Pearl: Modular Rollback through Control Logging'? | 命中表数 0 -> 3 | Recall 0.0000 -> 1.0000 | MRR 0.0000 -> 1.0000
-- Q213: Who is the primary author of the paper titled 'Functional Pearl: Modular Rollback through Control Logging'? | 命中表数 0 -> 3 | Recall 0.0000 -> 1.0000 | MRR 0.0000 -> 1.0000
-- Q37: Who was the editor responsible for the photo work in the journal issue with the highest sales? | 命中表数 1 -> 3 | Recall 0.3333 -> 1.0000 | MRR 1.0000 -> 1.0000
-- Q17: List the names of the employees who are certified to fly aircraft capable of traveling more than 8000 miles and who h... | 命中表数 0 -> 2 | Recall 0.0000 -> 0.6667 | MRR 0.0000 -> 1.0000
-- Q34: Who was responsible for the photo work type in the journal themed 'at Minnesota Vikings'? | 命中表数 0 -> 2 | Recall 0.0000 -> 0.6667 | MRR 0.0000 -> 1.0000
-- Q232: Who is the second author of the paper titled 'Functional Pearl: Modular Rollback through Control Logging'? | 命中表数 0 -> 2 | Recall 0.0000 -> 0.6667 | MRR 0.0000 -> 1.0000
-- Q233: Who is the second author of the paper titled 'Functional Pearl: Modular Rollback through Control Logging'? | 命中表数 0 -> 2 | Recall 0.0000 -> 0.6667 | MRR 0.0000 -> 1.0000
-- Q241: Who is the second author of the paper titled 'Functional Pearl: Modular Rollback through Control Logging'? | 命中表数 0 -> 2 | Recall 0.0000 -> 0.6667 | MRR 0.0000 -> 1.0000
-- Q378: What are the full names and ages of students who are members of clubs located at 'AKW'? | 命中表数 0 -> 2 | Recall 0.0000 -> 0.6667 | MRR 0.0000 -> 1.0000
+- 无
 
 ### 代表性退化样例
 
-- Q537: How many dorms with a student capacity greater than 100 have the amenity 'Pub in Basement'? | 命中表数 3 -> 1 | Recall 1.0000 -> 0.3333 | MRR 1.0000 -> 0.3333
-- Q357: List the names of physicians along with procedure names and their costs, for which they hold valid certifications exp... | 命中表数 3 -> 1 | Recall 1.0000 -> 0.3333 | MRR 1.0000 -> 1.0000
-- Q19: Find the first and last names of students who live in PIT and have allergies to animals. | 命中表数 2 -> 0 | Recall 0.6667 -> 0.0000 | MRR 1.0000 -> 0.0000
-- Q25: Find the first and last names of students who have both animal and food allergies. | 命中表数 2 -> 0 | Recall 0.6667 -> 0.0000 | MRR 1.0000 -> 0.0000
-- Q696: What course scheduled on 9 May is taught by a teacher from Little Lever Urban District? | 命中表数 2 -> 0 | Recall 0.6667 -> 0.0000 | MRR 1.0000 -> 0.0000
-- Q699: Who is the teacher teaching the Math course to students in grade 3? | 命中表数 2 -> 0 | Recall 0.6667 -> 0.0000 | MRR 1.0000 -> 0.0000
-- Q64: Which courses in Cybernetics were taught during Spring 2008, and who were their instructors? | 命中表数 2 -> 0 | Recall 0.6667 -> 0.0000 | MRR 0.5000 -> 0.0000
-- Q228: Which country has the institution with the highest number of distinct published papers? | 命中表数 2 -> 0 | Recall 0.6667 -> 0.0000 | MRR 0.5000 -> 0.0000
-- Q280: Which classes, along with their times and rooms, belong to the 'Computer Info. Systems' department and have a course ... | 命中表数 2 -> 0 | Recall 0.6667 -> 0.0000 | MRR 0.5000 -> 0.0000
-- Q403: How many unique clubs have at least one member who is a student from the city with the city_code 'BAL'? | 命中表数 2 -> 0 | Recall 0.6667 -> 0.0000 | MRR 0.5000 -> 0.0000
+- 无
