@@ -1,6 +1,7 @@
 """多表检索(MTR)核心算法模块。"""
 
 import json
+import re
 from typing import Dict, List, Optional
 
 from src.question_decomposer import QuestionDecomposer
@@ -55,6 +56,29 @@ class MultiTableRetriever:
         self.use_propagation = use_propagation
         self.retrieval_mode = retrieval_mode
         self._relationship_cache = {}
+        self.hybrid_trigger_phrases = [
+            "both",
+            "along with",
+            "for which",
+            "highest",
+            "lowest",
+            "earliest",
+            "latest",
+            "temporary acting",
+        ]
+        self.hybrid_trigger_keywords = {
+            "author",
+            "authors",
+            "paper",
+            "papers",
+            "aircraft",
+            "aircrafts",
+            "certified",
+            "certificate",
+            "certificates",
+            "journal",
+            "editor",
+        }
 
         print(f"[OK] MTR检索器初始化完成 (表池: {len(self.table_pool)} 张表, mode={self.retrieval_mode})")
 
@@ -142,6 +166,24 @@ class MultiTableRetriever:
             for i, sq in enumerate(sub_questions, 1):
                 print(f"      {i}. {sq[:60]}...")
         return sub_questions
+
+    def _should_use_hybrid_propagation(self, question: str, verbose: bool) -> bool:
+        lower_question = question.lower()
+
+        if any(phrase in lower_question for phrase in self.hybrid_trigger_phrases):
+            if verbose:
+                print("[MTR-hybrid] 命中短语规则，启用关系传播")
+            return True
+
+        tokens = set(re.findall(r"[a-zA-Z_]+", lower_question))
+        if tokens & self.hybrid_trigger_keywords:
+            if verbose:
+                print("[MTR-hybrid] 命中关键词规则，启用关系传播")
+            return True
+
+        if verbose:
+            print("[MTR-hybrid] 未命中规则，退回纯语义检索")
+        return False
 
     def _get_table_data_by_id(self, table_id: str):
         for pool_key, data in self.table_pool.items():
@@ -279,11 +321,27 @@ class MultiTableRetriever:
         retrieval_round = 1 + len(sub_questions) if (self.use_propagation and self.use_decomposition) else 1
         return self._format_final_results(current_tables, top_k, retrieval_round, verbose)
 
+    def _retrieve_hybrid_mode(self, question: str, top_k: int, verbose: bool) -> List[Dict]:
+        original_use_decomposition = self.use_decomposition
+        original_use_propagation = self.use_propagation
+
+        should_propagate = self._should_use_hybrid_propagation(question, verbose)
+        self.use_decomposition = should_propagate
+        self.use_propagation = should_propagate
+
+        try:
+            return self._retrieve_current_mode(question, top_k, verbose)
+        finally:
+            self.use_decomposition = original_use_decomposition
+            self.use_propagation = original_use_propagation
+
     def retrieve(self, question: str, top_k: int = 5, verbose: bool = False) -> List[Dict]:
         if verbose:
             print(f"\n[MTR] 开始检索问题: {question[:60]}...")
         if self.retrieval_mode == "paper":
             return self._retrieve_paper_mode(question, top_k, verbose)
+        if self.retrieval_mode == "hybrid":
+            return self._retrieve_hybrid_mode(question, top_k, verbose)
         return self._retrieve_current_mode(question, top_k, verbose)
 
 

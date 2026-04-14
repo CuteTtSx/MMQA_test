@@ -2,8 +2,8 @@ import argparse, json, re
 from collections import Counter
 from pathlib import Path
 
-REPORTS={"E1":"outputs/MTR_evaluate/e1_three_table_report.json","E2":"outputs/MTR_evaluate/e2_three_table_report.json","E3":"outputs/MTR_evaluate/e3_three_table_report.json","E3_PAPER":"outputs/MTR_evaluate/e3_paper_three_table_report.json"}
-PAIRWISE=["E2","E3","E3_PAPER"]
+REPORTS={"E1":"outputs/MTR_evaluate/e1_three_table_report.json","E2":"outputs/MTR_evaluate/e2_three_table_report.json","E3":"outputs/MTR_evaluate/e3_three_table_report.json","E3_PAPER":"outputs/MTR_evaluate/e3_paper_three_table_report.json","E4_HYBRID":"outputs/MTR_evaluate/e4_hybrid_three_table_report.json"}
+PAIRWISE=["E2","E3","E3_PAPER","E4_HYBRID"]
 STOP={"the","a","an","of","and","or","to","for","with","who","what","which","is","are","was","were","be","by","in","on","from","at","as","their","his","her","its","than","that","have","has","had","list","find","show","name","names","all","more","less","least","most","both","along","where","whose","when","after","before","into","also","only","between"}
 PHRASES=["both","along with","for which","who have","who has","greater than","less than","at least","at most","ordered by","group by","highest","lowest","earliest","latest","currently","temporary acting"]
 
@@ -114,11 +114,12 @@ def parse_args():
     p.add_argument("--e2",type=str,default=REPORTS["E2"])
     p.add_argument("--e3",type=str,default=REPORTS["E3"])
     p.add_argument("--e3_paper",type=str,default=REPORTS["E3_PAPER"])
+    p.add_argument("--e4_hybrid",type=str,default=REPORTS["E4_HYBRID"])
     return p.parse_args()
 
 def main():
     a=parse_args()
-    reports={"E1":rd(a.e1),"E2":rd(a.e2),"E3":rd(a.e3),"E3_PAPER":rd(a.e3_paper)}
+    reports={"E1":rd(a.e1),"E2":rd(a.e2),"E3":rd(a.e3),"E3_PAPER":rd(a.e3_paper),"E4_HYBRID":rd(a.e4_hybrid)}
     rows=ablation_rows(reports,a.top_k)
     base=reports["E1"]
     pairwise={name:compare(base,reports[name],a.top_k,a.sample_limit) for name in PAIRWISE}

@@ -5,12 +5,13 @@
 - `E2` 相对 `E1`：Recall -0.0240，MRR -0.0268
 - `E3` 相对 `E1`：Recall -0.0328，MRR -0.0707
 - `E3_PAPER` 相对 `E1`：Recall -0.2339，MRR -0.2957
+- `E4_HYBRID` 相对 `E1`：Recall +0.0111，MRR +0.0012
 
 ## 二、最佳指标
 
-- 最佳 Recall：`E1` = 0.5081
-- 最佳 MRR：`E1` = 0.7732
-- 最佳 MAP@k：`E1` = 0.4483
+- 最佳 Recall：`E4_HYBRID` = 0.5192
+- 最佳 MRR：`E4_HYBRID` = 0.7744
+- 最佳 MAP@k：`E4_HYBRID` = 0.4618
 
 ## 三、消融实验对照表
 
@@ -20,6 +21,7 @@
 | E2 | 分解 + 纯语义 | 是 | 否 | 0.4840 | 0.4840 | 0.4840 | 0.7464 | 0.4319 | 1.2666 | 1.4521 |
 | E3 | 完整 MTR | 是 | 是 | 0.4753 | 0.4753 | 0.4753 | 0.7025 | 0.4227 | 1.3038 | 1.4258 |
 | E3_PAPER | 完整 MTR（paper-like） | 是 | 是 | 0.2742 | 0.2742 | 0.2742 | 0.4776 | 0.2294 | 1.4145 | 0.8225 |
+| E4_HYBRID | Hybrid：选择性关系传播 | 是 | 是 | 0.5192 | 0.5192 | 0.5192 | 0.7744 | 0.4618 | 1.2766 | 1.5576 |
 
 ## 四、逐题对比汇总（相对 E1）
 
@@ -28,6 +30,7 @@
 | E2 | 97 | 147 | 477 | -0.0240 | -0.0268 | -0.0721 |
 | E3 | 105 | 167 | 449 | -0.0328 | -0.0707 | -0.0985 |
 | E3_PAPER | 59 | 429 | 233 | -0.2339 | -0.2957 | -0.7018 |
+| E4_HYBRID | 45 | 28 | 648 | 0.0111 | 0.0012 | 0.0333 |
 
 ## 五、E2 相对 E1 的错误类型分析
 
@@ -373,3 +376,114 @@
 - Q554: Which gender-neutral dorm has a 'Pub in Basement' amenity and can accommodate more than 300 students? | 命中表数 3 -> 0 | Recall 1.0000 -> 0.0000 | MRR 1.0000 -> 0.0000
 - Q559: What dormitory with a student capacity greater than 300 provides both 'Air Conditioning' and also 'Allows Pets'? | 命中表数 3 -> 0 | Recall 1.0000 -> 0.0000 | MRR 1.0000 -> 0.0000
 - Q573: What is the total amount of purchase transactions involving lots owned by the investor with investor_id 7? | 命中表数 3 -> 0 | Recall 1.0000 -> 0.0000 | MRR 1.0000 -> 0.0000
+
+## 五、E4_HYBRID 相对 E1 的错误类型分析
+
+- 改善题数：45
+- 退化题数：28
+- 持平题数：648
+- 平均 Recall 变化：0.0111
+- 平均 MRR 变化：0.0012
+- 平均命中表数变化：0.0333
+
+### 命中表数转移矩阵
+
+| 命中表数转移 | 题数 |
+| --- | --- |
+| 2 -> 2 | 262 |
+| 1 -> 1 | 223 |
+| 3 -> 3 | 86 |
+| 0 -> 0 | 77 |
+| 1 -> 2 | 18 |
+| 2 -> 3 | 11 |
+| 1 -> 0 | 10 |
+| 2 -> 1 | 7 |
+| 0 -> 1 | 6 |
+| 0 -> 2 | 5 |
+| 2 -> 0 | 5 |
+| 3 -> 2 | 5 |
+| 0 -> 3 | 3 |
+| 1 -> 3 | 2 |
+| 3 -> 1 | 1 |
+
+### 改善题中的高频短语模式
+
+| 模式 / 关键词 | 次数 |
+| --- | --- |
+| highest | 12 |
+| both | 5 |
+| greater than | 5 |
+| who have | 3 |
+| along with | 3 |
+| temporary acting | 2 |
+| earliest | 2 |
+| currently | 1 |
+| who has | 1 |
+| for which | 1 |
+
+### 退化题中的高频短语模式
+
+| 模式 / 关键词 | 次数 |
+| --- | --- |
+| highest | 9 |
+| along with | 6 |
+| both | 4 |
+| greater than | 2 |
+| who have | 1 |
+| for which | 1 |
+
+### 改善题中的高频关键词
+
+| 模式 / 关键词 | 次数 |
+| --- | --- |
+| highest | 12 |
+| paper | 12 |
+| titled | 11 |
+| author | 10 |
+| aircraft | 8 |
+| functional | 8 |
+| pearl | 8 |
+| modular | 8 |
+| rollback | 8 |
+| through | 8 |
+
+### 退化题中的高频关键词
+
+| 模式 / 关键词 | 次数 |
+| --- | --- |
+| highest | 9 |
+| first | 7 |
+| number | 6 |
+| institution | 6 |
+| last | 5 |
+| country | 5 |
+| author | 5 |
+| paper | 5 |
+| titles | 4 |
+| students | 3 |
+
+### 代表性改善样例
+
+- Q210: Who is the primary author of the paper titled 'Functional Pearl: Modular Rollback through Control Logging'? | 命中表数 0 -> 3 | Recall 0.0000 -> 1.0000 | MRR 0.0000 -> 1.0000
+- Q211: Who is the first-listed author of the paper titled 'Functional Pearl: Modular Rollback through Control Logging'? | 命中表数 0 -> 3 | Recall 0.0000 -> 1.0000 | MRR 0.0000 -> 1.0000
+- Q213: Who is the primary author of the paper titled 'Functional Pearl: Modular Rollback through Control Logging'? | 命中表数 0 -> 3 | Recall 0.0000 -> 1.0000 | MRR 0.0000 -> 1.0000
+- Q1: Which department(s) currently have temporary acting heads who were born in California? | 命中表数 1 -> 3 | Recall 0.3333 -> 1.0000 | MRR 1.0000 -> 1.0000
+- Q37: Who was the editor responsible for the photo work in the journal issue with the highest sales? | 命中表数 1 -> 3 | Recall 0.3333 -> 1.0000 | MRR 1.0000 -> 1.0000
+- Q17: List the names of the employees who are certified to fly aircraft capable of traveling more than 8000 miles and who h... | 命中表数 0 -> 2 | Recall 0.0000 -> 0.6667 | MRR 0.0000 -> 1.0000
+- Q34: Who was responsible for the photo work type in the journal themed 'at Minnesota Vikings'? | 命中表数 0 -> 2 | Recall 0.0000 -> 0.6667 | MRR 0.0000 -> 1.0000
+- Q232: Who is the second author of the paper titled 'Functional Pearl: Modular Rollback through Control Logging'? | 命中表数 0 -> 2 | Recall 0.0000 -> 0.6667 | MRR 0.0000 -> 1.0000
+- Q233: Who is the second author of the paper titled 'Functional Pearl: Modular Rollback through Control Logging'? | 命中表数 0 -> 2 | Recall 0.0000 -> 0.6667 | MRR 0.0000 -> 1.0000
+- Q241: Who is the second author of the paper titled 'Functional Pearl: Modular Rollback through Control Logging'? | 命中表数 0 -> 2 | Recall 0.0000 -> 0.6667 | MRR 0.0000 -> 1.0000
+
+### 代表性退化样例
+
+- Q357: List the names of physicians along with procedure names and their costs, for which they hold valid certifications exp... | 命中表数 3 -> 1 | Recall 1.0000 -> 0.3333 | MRR 1.0000 -> 1.0000
+- Q25: Find the first and last names of students who have both animal and food allergies. | 命中表数 2 -> 0 | Recall 0.6667 -> 0.0000 | MRR 1.0000 -> 0.0000
+- Q99: Which customers have both savings balances greater than 50000 and checking balances greater than 5000? | 命中表数 2 -> 0 | Recall 0.6667 -> 0.0000 | MRR 1.0000 -> 0.0000
+- Q227: List all paper titles authored by individuals from institutions in Japan. | 命中表数 2 -> 0 | Recall 0.6667 -> 0.0000 | MRR 1.0000 -> 0.0000
+- Q228: Which country has the institution with the highest number of distinct published papers? | 命中表数 2 -> 0 | Recall 0.6667 -> 0.0000 | MRR 0.5000 -> 0.0000
+- Q280: Which classes, along with their times and rooms, belong to the 'Computer Info. Systems' department and have a course ... | 命中表数 2 -> 0 | Recall 0.6667 -> 0.0000 | MRR 0.5000 -> 0.0000
+- Q74: What are the titles of the courses along with building names and room numbers for courses held in Fall 2005 in classr... | 命中表数 3 -> 2 | Recall 1.0000 -> 0.6667 | MRR 1.0000 -> 1.0000
+- Q138: Which company with the highest rank was associated with a gas station managed by Colin Denman? | 命中表数 3 -> 2 | Recall 1.0000 -> 0.6667 | MRR 1.0000 -> 1.0000
+- Q169: In 2004, among all campuses located in Los Angeles County, which university awarded the highest number of degrees, an... | 命中表数 3 -> 2 | Recall 1.0000 -> 0.6667 | MRR 1.0000 -> 1.0000
+- Q235: What is the title of the paper where author Ralf Hinze is listed as the first author? | 命中表数 3 -> 2 | Recall 1.0000 -> 0.6667 | MRR 1.0000 -> 1.0000

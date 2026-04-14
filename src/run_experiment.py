@@ -36,7 +36,7 @@ def parse_args():
 
     # retrieval 专用
     parser.add_argument("--table_num", type=int, choices=[2, 3], default=3)
-    parser.add_argument("--experiment_type", type=str, choices=["E1", "E2", "E3", "E3_PAPER"], default="E3")
+    parser.add_argument("--experiment_type", type=str, choices=["E1", "E2", "E3", "E3_PAPER", "E4_HYBRID"], default="E3")
     parser.add_argument("--num_iterations", type=int, default=2)
 
     # text2sql / qa 共享
