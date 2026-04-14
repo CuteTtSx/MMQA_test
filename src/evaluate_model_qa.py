@@ -21,6 +21,8 @@ from typing import Dict, List, Optional, Tuple
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
+DEFAULT_MODEL_NAME = "Qwen/Qwen2.5-1.5B-Instruct"
+DEFAULT_OUTPUT_FILE = "outputs/qwen_qa/evaluate_model_qa_predictions.jsonl"
 
 SYSTEM_PROMPT = (
     "You are an expert at multi-table question answering. "
@@ -111,10 +113,11 @@ class MultiTableQAPipeline:
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Evaluate multi-table QA with full rows in prompt")
-    parser.add_argument("--model_name", type=str, default="Qwen/Qwen2.5-1.5B-Instruct")
+    parser.add_argument("--model_name", type=str, default=DEFAULT_MODEL_NAME)
     parser.add_argument("--data_dir", type=str, default="data")
-    parser.add_argument("--output_file", type=str, default="outputs/qwen_qa/evaluate_model_qa_predictions.jsonl")
+    parser.add_argument("--output_file", type=str, default=DEFAULT_OUTPUT_FILE)
     parser.add_argument("--max_new_tokens", type=int, default=128)
+    parser.add_argument("--max_rows", type=int, default=50) # 每个表最大取多少行
     parser.add_argument("--limit", type=int, default=0, help="只评估前 N 条，0 表示全部")
     parser.add_argument("--bf16", action="store_true")
     parser.add_argument("--fp16", action="store_true")
@@ -154,16 +157,21 @@ def compute_pm(pred_answers: List[str], gold_answers: List[str]) -> float:
     return 2 * precision * recall / (precision + recall)
 
 
-def format_table(table_idx: int, table: Dict) -> str:
+def format_table(table_idx: int, table: Dict, max_rows: int = 100) -> str:
     header = f"[TABLE{table_idx}]\n"
     header += f"Table Name: {table['table_name']}\n"
     header += f"Columns: {', '.join(table['columns'])}\n"
     header += "Rows:\n"
 
     row_lines = []
-    for row_id, row in enumerate(table["rows"], start=1):
+    # 只取前max_rows行
+    for row_id, row in enumerate(table["rows"][:max_rows], start=1):
         row_values = [str(x) for x in row]
         row_lines.append(f"Row {row_id}: {', '.join(row_values)}")
+
+    # 如果原表行数超过了最大行数，加一句提示，让大模型知道数据被截断了
+    if len(table["rows"]) > max_rows:
+        row_lines.append(f"... [TRUNCATED, ONLY SHOWING TOP {max_rows} ROWS] ...")
 
     if not row_lines:
         row_lines.append("<EMPTY>")
@@ -171,10 +179,10 @@ def format_table(table_idx: int, table: Dict) -> str:
     return header + "\n".join(row_lines)
 
 
-def build_user_prompt(question: str, tables: List[Dict]) -> str:
+def build_user_prompt(question: str, tables: List[Dict], max_rows: int) -> str:
     parts = [f"[Question]\n{question}"]
     for idx, table in enumerate(tables, start=1):
-        parts.append(format_table(idx, table))
+        parts.append(format_table(idx, table, max_rows))
     return "\n\n".join(parts)
 
 
@@ -244,10 +252,10 @@ def try_parse_answers(text: str) -> Tuple[bool, List[str], Optional[Dict]]:
     return False, [], None
 
 
-def generate_answers(model, tokenizer, question: str, tables: List[Dict], max_new_tokens: int, device: str) -> str:
+def generate_answers(model, tokenizer, question: str, tables: List[Dict], max_new_tokens: int, device: str, max_rows: int) -> str:
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT},
-        {"role": "user", "content": build_user_prompt(question, tables)},
+        {"role": "user", "content": build_user_prompt(question, tables, max_rows)},
     ]
 
     prompt = apply_chat_template(messages, tokenizer)
@@ -352,6 +360,7 @@ def main():
             tables=sample["tables"],
             max_new_tokens=args.max_new_tokens,
             device=device,
+            max_rows=args.max_rows,
         )
 
         json_ok, pred_answers, parsed_json = try_parse_answers(raw_prediction)

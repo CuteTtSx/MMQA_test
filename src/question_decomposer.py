@@ -88,7 +88,7 @@ class QuestionDecomposer:
         self.model = model
         self.temperature = temperature
         self.max_retries = max_retries
-        self.cache_dir = Path(cache_dir) if cache_dir else None
+        self.cache_dir = Path(cache_dir + "_" + model) if cache_dir else None
         
         if self.cache_dir:
             self.cache_dir.mkdir(parents=True, exist_ok=True)
@@ -273,7 +273,7 @@ def main():
     
     # 初始化分解器（启用缓存）
     decomposer = QuestionDecomposer(
-        model = "gpt-4o-mini",
+        model = "gpt-5.4",
         cache_dir="data/decomposition_cache"
     )
     

@@ -17,9 +17,10 @@ build/
 *.swo
 
 # Data & Cache
-data/decomposition_cache/
+data/decomposition_cache*/
 data/similarity_cache/
 data/*.json
+data/*.jsonl
 *.pyc
 
 # Environment

@@ -152,9 +152,7 @@ class SemanticSimilarityCalculator:
         return similarities
 
     def compute_table_relationship_score(self, table1: Dict, table2: Dict) -> float:
-        """
-            计算两张表的拓扑关系强度（严格基于主键和外键）
-        """
+        """计算两张表的拓扑关系强度。"""
         # 获取表1的列名
         t1_cols = set()
         for col in table1.get("table_columns", []):
@@ -193,11 +191,48 @@ class SemanticSimilarityCalculator:
             has_strong_link = True
 
         # 【评分策略】如果主外键严丝合缝，给予极高的权重 1.0。如果是孤岛表，直接惩罚到 0.1
-        return 1.0 if has_strong_link else 0
+        return 1.0 if has_strong_link else 0.1
+
+        # def normalize_name(name: str) -> str:
+        #     if not name:
+        #         return ""
+        #     return name.replace("_", "").replace(" ", "").lower()
+
+        # def build_col_map(table: Dict) -> Dict[str, str]:
+        #     mapping = {}
+        #     for col in table.get("table_columns", []):
+        #         original = col.get("column_name", "")
+        #         mapping[normalize_name(original)] = original
+        #     return mapping
+
+        # t1_col_map = build_col_map(table1)
+        # t2_col_map = build_col_map(table2)
+        # t1_cols = set(t1_col_map.keys())
+        # t2_cols = set(t2_col_map.keys())
+
+        # t1_pk = normalize_name(table1.get("primary_key", ""))
+        # t2_pk = normalize_name(table2.get("primary_key", ""))
+        # t1_fks = {normalize_name(col) for col in table1.get("foreign_keys", []) if col}
+        # t2_fks = {normalize_name(col) for col in table2.get("foreign_keys", []) if col}
+
+        # t1_is_bridge = (not t1_pk) and len(t1_fks) >= 2
+        # t2_is_bridge = (not t2_pk) and len(t2_fks) >= 2
+
+        # if t2_pk and (t2_pk in t1_fks) and (t2_pk in t1_cols) and (t2_pk in t2_cols):
+        #     return 1.0
+        # if t1_pk and (t1_pk in t2_fks) and (t1_pk in t2_cols) and (t1_pk in t1_cols):
+        #     return 1.0
+
+        # if t1_is_bridge and t2_pk and (t2_pk in t1_fks) and (t2_pk in t2_cols):
+        #     return 0.9
+        # if t2_is_bridge and t1_pk and (t1_pk in t2_fks) and (t1_pk in t1_cols):
+        #     return 0.9
+
+        # return 0.0
 
     def compute_table_relationship_score1(self, table1: Dict, table2: Dict) -> float:
         """
-        (第一版的表间相似度计算, 没有考虑主外键关系, 废弃掉)
+        (第一版的表间相似度计算, 没有考虑主外键关系, 暂时废弃掉)
         计算两张表的关系强度
         
         基于以下因素：
