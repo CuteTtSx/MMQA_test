@@ -29,14 +29,14 @@ def parse_args():
 
     # 通用参数
     parser.add_argument("--limit", type=int, default=0)
-    parser.add_argument("--model_name", type=str, default="gpt-4o-mini")
+    parser.add_argument("--model_name", type=str, default="")
     parser.add_argument("--output_file", type=str, default="")
     parser.add_argument("--fp16", action="store_true")
     parser.add_argument("--bf16", action="store_true")
 
     # retrieval 专用
     parser.add_argument("--table_num", type=int, choices=[2, 3], default=3)
-    parser.add_argument("--experiment_type", type=str, choices=["E1", "E2", "E3", "E3_PAPER", "E4_HYBRID"], default="E3")
+    parser.add_argument("--experiment_type", type=str, choices=["E1", "E2", "E3", "E3_PAPER", "E4_HYBRID", "E5_HYBRID_LOCAL"], default="E3")
     parser.add_argument("--num_iterations", type=int, default=2)
 
     # text2sql / qa 共享

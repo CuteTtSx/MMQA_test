@@ -43,7 +43,7 @@ def process_and_save_table_pool(input_file, output_file):
                     "primary_key": pk,
                     "foreign_keys": list(set(table_fks)),
                     "columns": columns,
-                    "content": tables_data[i].get('table_content', [])
+                    # "content": tables_data[i].get('table_content', [])
                 }
             else:
                 # 补充新外键（针对真正的同一张表）
@@ -90,6 +90,7 @@ if __name__ == "__main__":
     # 循环执行任务，互不干扰
     for task in file_tasks:
         process_and_save_table_pool(task["input"], task["output"])
+
 
 # 新版本: 找表的主外键, 但是最终在MTR的效果却更差
 # import json
@@ -280,7 +281,7 @@ if __name__ == "__main__":
 #                     "primary_key": primary_key,
 #                     "foreign_keys": foreign_keys,
 #                     "columns": columns,
-#                     "content": tables_data[i].get('table_content', [])
+#                     # "content": tables_data[i].get('table_content', [])
 #                 }
 
 #     print(f"✅ 处理完毕！从该文件中提取到 {len(local_pool)} 张独立表格。")

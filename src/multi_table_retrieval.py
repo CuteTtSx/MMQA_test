@@ -55,8 +55,11 @@ class MultiTableRetriever:
         self.use_propagation = use_propagation
         self.retrieval_mode = retrieval_mode
         self._relationship_cache = {}
-        self.hybrid_rerank_alpha = 0.8
-        self.hybrid_rerank_beta = 0.2
+        self.hybrid_gap12_threshold = 0.015
+        self.hybrid_gap13_threshold = 0.03
+        self.hybrid_rerank_alpha = 0.75
+        self.hybrid_rerank_beta = 0.25
+        self.hybrid_expand_per_seed = 2
 
         print(f"[OK] MTR检索器初始化完成 (表池: {len(self.table_pool)} 张表, mode={self.retrieval_mode})")
 
@@ -122,7 +125,7 @@ class MultiTableRetriever:
 
         schema1 = self._convert_pool_table_to_schema("", table1_data)
         schema2 = self._convert_pool_table_to_schema("", table2_data)
-        score = self.similarity_calculator.compute_table_relationship_score(schema1, schema2)
+        score = self.similarity_calculator.compute_table_relationship_score1(schema1, schema2)
         self._relationship_cache[cache_key] = score
         return score
 
@@ -285,15 +288,63 @@ class MultiTableRetriever:
         retrieval_round = 1 + len(sub_questions) if (self.use_propagation and self.use_decomposition) else 1
         return self._format_final_results(current_tables, top_k, retrieval_round, verbose)
 
-    def _retrieve_hybrid_mode(self, question: str, top_k: int, verbose: bool) -> List[Dict]:
+    def _retrieve_hybrid_uncertainty_mode(self, question: str, top_k: int, verbose: bool) -> List[Dict]:
+        baseline_scores = self._compute_aggregated_question_table_scores([question])
+        ranked_scores = sorted(baseline_scores.items(), key=lambda x: x[1], reverse=True)
+        top_scores = [score for _, score in ranked_scores[:3]]
+
+        should_propagate = False
+        if len(top_scores) >= 3:
+            gap12 = top_scores[0] - top_scores[1]
+            gap13 = top_scores[0] - top_scores[2]
+            should_propagate = gap12 <= self.hybrid_gap12_threshold or gap13 <= self.hybrid_gap13_threshold
+            if verbose:
+                print(
+                    f"[MTR-hybrid-uncertainty] top1-top2={gap12:.4f}, top1-top3={gap13:.4f}, "
+                    f"thresholds=({self.hybrid_gap12_threshold:.4f}, {self.hybrid_gap13_threshold:.4f})"
+                )
+        if not should_propagate:
+            if verbose:
+                print("[MTR-hybrid-uncertainty] 保持纯语义检索")
+            original_use_decomposition = self.use_decomposition
+            original_use_propagation = self.use_propagation
+            self.use_decomposition = False
+            self.use_propagation = False
+            try:
+                return self._retrieve_current_mode(question, top_k, verbose)
+            finally:
+                self.use_decomposition = original_use_decomposition
+                self.use_propagation = original_use_propagation
+
         if verbose:
-            print("[MTR-hybrid] 使用 E1 候选 + propagation rerank")
+            print("[MTR-hybrid-uncertainty] 启用分解与传播")
+        return self._retrieve_current_mode(question, top_k, verbose)
+
+    def _retrieve_hybrid_local_mode(self, question: str, top_k: int, verbose: bool) -> List[Dict]:
+        if verbose:
+            print("[MTR-hybrid-local] 使用 E1 种子候选 + 局部扩展 + propagation rerank")
 
         baseline_scores = self._compute_aggregated_question_table_scores([question])
-        candidate_tables = dict(sorted(baseline_scores.items(), key=lambda x: x[1], reverse=True)[: self.top_k_per_round])
+        seed_tables = dict(sorted(baseline_scores.items(), key=lambda x: x[1], reverse=True)[: self.top_k_per_round])
+
+        expanded_tables = dict(seed_tables)
+        for seed_table_id in seed_tables:
+            neighbor_scores = []
+            for candidate_table_id in baseline_scores:
+                if candidate_table_id in expanded_tables:
+                    continue
+                rel_score = self._compute_table_relationship_score(seed_table_id, candidate_table_id)
+                if rel_score > 0.1:
+                    combined_score = 0.7 * baseline_scores[candidate_table_id] + 0.3 * rel_score
+                    neighbor_scores.append((candidate_table_id, combined_score))
+            for neighbor_table_id, neighbor_score in sorted(neighbor_scores, key=lambda x: x[1], reverse=True)[: self.hybrid_expand_per_seed]:
+                if neighbor_table_id not in expanded_tables:
+                    expanded_tables[neighbor_table_id] = baseline_scores[neighbor_table_id]
+
+        candidate_tables = dict(sorted(expanded_tables.items(), key=lambda x: x[1], reverse=True)[: self.top_k_per_round + self.hybrid_expand_per_seed])
 
         if verbose:
-            print(f"[MTR-hybrid] E1 候选表数: {len(candidate_tables)}")
+            print(f"[MTR-hybrid-local] E1 种子表数: {len(seed_tables)}，局部扩展后候选表数: {len(candidate_tables)}")
 
         sub_questions = self.decomposer.decompose(question) if self.use_decomposition else [question]
         if not sub_questions:
@@ -303,7 +354,7 @@ class MultiTableRetriever:
         if self.use_propagation and self.num_iterations > 1:
             for iteration in range(1, self.num_iterations):
                 if verbose:
-                    print(f"[MTR-hybrid] 第{iteration + 1}轮候选内传播重排")
+                    print(f"[MTR-hybrid-local] 第{iteration + 1}轮局部扩展池内传播重排")
                 propagated_scores = {table_id: 0.0 for table_id in candidate_tables}
                 for sub_q in sub_questions:
                     similarities = self._compute_question_table_similarities(sub_q)
@@ -321,10 +372,10 @@ class MultiTableRetriever:
                         self.hybrid_rerank_alpha * candidate_tables[table_id]
                         + self.hybrid_rerank_beta * propagated_scores[table_id]
                     )
-                rerank_scores = dict(sorted(propagated_scores.items(), key=lambda x: x[1], reverse=True)[: self.top_k_per_round])
+                rerank_scores = dict(sorted(propagated_scores.items(), key=lambda x: x[1], reverse=True)[: len(candidate_tables)])
         else:
             if verbose:
-                print("[MTR-hybrid] 跳过传播，直接返回 E1 候选")
+                print("[MTR-hybrid-local] 跳过传播，直接返回局部扩展候选")
 
         retrieval_round = self.num_iterations if (self.use_propagation and self.num_iterations > 1) else 1
         return self._format_final_results(rerank_scores, top_k, retrieval_round, verbose)
@@ -334,8 +385,10 @@ class MultiTableRetriever:
             print(f"\n[MTR] 开始检索问题: {question[:60]}...")
         if self.retrieval_mode == "paper":
             return self._retrieve_paper_mode(question, top_k, verbose)
-        if self.retrieval_mode == "hybrid":
-            return self._retrieve_hybrid_mode(question, top_k, verbose)
+        if self.retrieval_mode == "hybrid_uncertainty":
+            return self._retrieve_hybrid_uncertainty_mode(question, top_k, verbose)
+        if self.retrieval_mode == "hybrid_local":
+            return self._retrieve_hybrid_local_mode(question, top_k, verbose)
         return self._retrieve_current_mode(question, top_k, verbose)
 
 

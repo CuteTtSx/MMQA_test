@@ -74,7 +74,12 @@ EXPERIMENT_TYPE_CONFIG = {
     "E4_HYBRID": {
         "use_decomposition": True,
         "use_propagation": True,
-        "label": "Hybrid：选择性关系传播",
+        "label": "Hybrid：不确定性门控传播",
+    },
+    "E5_HYBRID_LOCAL": {
+        "use_decomposition": True,
+        "use_propagation": True,
+        "label": "Hybrid：局部扩展 + 重排",
     },
 }
 
@@ -82,7 +87,7 @@ EXPERIMENT_TYPE_CONFIG = {
 def parse_args():
     parser = argparse.ArgumentParser(description="Evaluate retrieval experiments E1/E2/E3")
     parser.add_argument("--table_num", type=int, choices=[2, 3], default=3, help="2 表实验或 3 表实验")
-    parser.add_argument("--experiment_type", type=str, choices=["E1", "E2", "E3", "E3_PAPER", "E4_HYBRID"], default="E3")
+    parser.add_argument("--experiment_type", type=str, choices=["E1", "E2", "E3", "E3_PAPER", "E4_HYBRID", "E5_HYBRID_LOCAL"], default="E3")
     parser.add_argument("--num_iterations", type=int, default=2, help="MTR 迭代轮数")
     parser.add_argument("--limit", type=int, default=0, help="只评估前 N 条问题，0 表示全部")
     parser.add_argument("--output_file", type=str, default="", help="输出报告路径，默认自动命名")
@@ -153,7 +158,10 @@ def run_retrieval_experiment(
             use_decomposition=experiment_config["use_decomposition"],
             use_propagation=experiment_config["use_propagation"],
             retrieval_mode=(
-                "paper" if experiment_type == "E3_PAPER" else "hybrid" if experiment_type == "E4_HYBRID" else "current"
+                "paper" if experiment_type == "E3_PAPER"
+                else "hybrid_uncertainty" if experiment_type == "E4_HYBRID"
+                else "hybrid_local" if experiment_type == "E5_HYBRID_LOCAL"
+                else "current"
             ),
             model_name = model_name
         )
