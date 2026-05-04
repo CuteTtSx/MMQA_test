@@ -17,34 +17,37 @@
 import argparse
 import json
 import sys
+from pathlib import Path
 from typing import Dict, List
 
 import dotenv
 
-sys.path.insert(0, '.')
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
-from src.multi_table_retrieval import MultiTableRetriever
-from src.retrieval_evaluator_v2 import RetrievalEvaluatorV2
-
+from src.retrieval.multi_table_retrieval import MultiTableRetriever
+from src.retrieval.retrieval_evaluator_v2 import RetrievalEvaluatorV2
+from src.utils.config import Config
 
 dotenv.load_dotenv()
 
 
 TABLE_EXPERIMENT_CONFIG = {
     2: {
-        "qa_file": "data/QA_SQL_two_table.json",
-        "table_pool_file": "data/global_table_pool_two.json",
+        "qa_file": str(Config.QA_SQL_TWO_TABLE_FILE),
+        "table_pool_file": str(Config.GLOBAL_TABLE_POOL_TWO_FILE),
         "final_top_k": 2,
         "top_k_per_round_values": [2, 5, 10],
-        "default_output_file": "outputs/MTR_evaluate/retrieval_evaluation_two_table_report.json",
+        "default_output_file": str(Config.get_mtr_output_path("retrieval_evaluation_two_table_report.json")),
         "default_num_questions": 841,
     },
     3: {
-        "qa_file": "data/QA_SQL_three_table.json",
-        "table_pool_file": "data/global_table_pool_three.json",
+        "qa_file": str(Config.QA_SQL_THREE_TABLE_FILE),
+        "table_pool_file": str(Config.GLOBAL_TABLE_POOL_THREE_FILE),
         "final_top_k": 3,
         "top_k_per_round_values": [3, 5, 10],
-        "default_output_file": "outputs/MTR_evaluate/retrieval_evaluation_three_table_report.json",
+        "default_output_file": str(Config.get_mtr_output_path("retrieval_evaluation_three_table_report.json")),
         "default_num_questions": 721,
     },
 }
@@ -88,10 +91,10 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Evaluate retrieval experiments E1/E2/E3")
     parser.add_argument("--table_num", type=int, choices=[2, 3], default=3, help="2 表实验或 3 表实验")
     parser.add_argument("--experiment_type", type=str, choices=["E1", "E2", "E3", "E3_PAPER", "E4_HYBRID", "E5_HYBRID_LOCAL"], default="E3")
-    parser.add_argument("--num_iterations", type=int, default=2, help="MTR 迭代轮数")
+    parser.add_argument("--num_iterations", type=int, default=Config.MTR_CONFIG["num_rounds"], help="MTR 迭代轮数")
     parser.add_argument("--limit", type=int, default=0, help="只评估前 N 条问题，0 表示全部")
     parser.add_argument("--output_file", type=str, default="", help="输出报告路径，默认自动命名")
-    parser.add_argument("--model_name", type=str, default="gpt-4o-mini", help="问题分解器的模型")
+    parser.add_argument("--model_name", type=str, default=Config.DECOMPOSER_CONFIG["model"], help="问题分解器的模型")
     return parser.parse_args()
 
 
@@ -110,8 +113,10 @@ def format_metric(value: float) -> str:
 def get_output_file(table_num: int, experiment_type: str, output_file: str) -> str:
     if output_file:
         return output_file
+    config = TABLE_EXPERIMENT_CONFIG[table_num]
     suffix = "two_table" if table_num == 2 else "three_table"
-    return f"outputs/MTR_evaluate/{experiment_type.lower()}_{suffix}_report.json"
+    default_dir = Path(config["default_output_file"]).parent
+    return str(default_dir / f"{experiment_type.lower()}_{suffix}_report.json")
 
 
 def run_retrieval_experiment(
@@ -161,9 +166,9 @@ def run_retrieval_experiment(
                 "paper" if experiment_type == "E3_PAPER"
                 else "hybrid_uncertainty" if experiment_type == "E4_HYBRID"
                 else "hybrid_local" if experiment_type == "E5_HYBRID_LOCAL"
-                else "current"
+                else Config.MTR_CONFIG["retrieval_mode"]
             ),
-            model_name = model_name
+            model_name=model_name,
         )
 
         print("[INFO] 执行检索...")

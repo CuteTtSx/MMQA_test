@@ -17,6 +17,7 @@
 import argparse
 import json
 import re
+import sys
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -26,11 +27,17 @@ from peft import PeftModel
 from rouge_score import rouge_scorer
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
-DEFAULT_MODEL_NAME = "Qwen/Qwen2.5-1.5B-Instruct"
-DEFAULT_ADAPTER_PATH = "outputs/qwen_text2sql_lora/final_checkpoint"
-DEFAULT_TEST_FILE = "data/finetuning_test.jsonl"
-DEFAULT_OUTPUT_FILE = "outputs/qwen_text2sql_lora/eval_predictions.jsonl"
+from src.utils.config import Config
+
+
+DEFAULT_MODEL_NAME = Config.FINETUNING_BASE_MODEL
+DEFAULT_ADAPTER_PATH = str(Config.TEXT2SQL_FINAL_CHECKPOINT_DIR)
+DEFAULT_TEST_FILE = str(Config.FINETUNING_TEST_JSONL)
+DEFAULT_OUTPUT_FILE = str(Config.TEXT2SQL_EVAL_PREDICTIONS_FILE)
 
 
 def parse_args():
@@ -39,7 +46,7 @@ def parse_args():
     parser.add_argument("--adapter_path", type=str, default=DEFAULT_ADAPTER_PATH)
     parser.add_argument("--test_file", type=str, default=DEFAULT_TEST_FILE)
     parser.add_argument("--output_file", type=str, default=DEFAULT_OUTPUT_FILE)
-    parser.add_argument("--max_new_tokens", type=int, default=256)
+    parser.add_argument("--max_new_tokens", type=int, default=Config.FINETUNING_CONFIG["max_new_tokens"])
     parser.add_argument("--limit", type=int, default=0, help="只评估前 N 条，0 表示全部")
     parser.add_argument("--bf16", action="store_true")
     parser.add_argument("--fp16", action="store_true")

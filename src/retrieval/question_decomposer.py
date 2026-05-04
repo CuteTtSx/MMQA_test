@@ -1,63 +1,74 @@
 """
-优化的问题分解器模块
+问题分解器模块。
 
 功能：
-1. 将多跳问题分解为子问题
-2. 包含few-shot示例提高分解质量
-3. 实现错误处理和重试机制
-4. 支持缓存和批量处理
+1. 将复杂的多跳问题拆解为多个可独立回答的子问题。
+2. 通过 few-shot 示例约束大模型输出风格。
+3. 提供缓存、重试和批量处理能力。
+4. 为多表检索中的“先分解后检索”流程提供输入。
+
+说明：
+- 该模块默认依赖 OpenAI 兼容接口。
+- 输出格式被约束为 JSON，字段名固定为 sub_questions。
 """
 
-import os
-import json
-import time
-from typing import List, Dict, Any, Optional
-from pathlib import Path
 import hashlib
+import json
+import sys
+import time
+from pathlib import Path
+from typing import Any, Dict, List, Optional
 
-from langchain_openai import ChatOpenAI
-from langchain_core.prompts import ChatPromptTemplate
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
 from langchain_core.output_parsers import JsonOutputParser
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, Field
-import dotenv
 
-# 定义输出结构
+from src.utils.config import Config
+
+
 class SubQuestions(BaseModel):
+    """定义问题分解后的标准输出结构。"""
+
     sub_questions: List[str] = Field(..., description="拆解后的一系列子问题列表")
 
 
-# Few-shot示例
+# few-shot 示例用于稳定模型输出格式，并引导其按多跳推理顺序拆解问题。
 FEW_SHOT_EXAMPLES = [
     {
         "question": "What are the names of heads serving as temporary acting heads in departments with rankings better than 5?",
         "sub_questions": [
             "Which departments have rankings better than 5?",
             "Who are the temporary acting heads in these departments?",
-            "What are the names of these heads?"
-        ]
+            "What are the names of these heads?",
+        ],
     },
     {
         "question": "Which employee has certificates for aircrafts that have the highest average flying distance, and what is this average flying distance?",
         "sub_questions": [
             "For each employee, calculate the average flying distance of aircrafts they are certified for",
             "Which employee has the highest average flying distance?",
-            "What is this average flying distance value?"
-        ]
+            "What is this average flying distance value?",
+        ],
     },
     {
         "question": "List the names of students who have registered for both Statistics and English courses.",
         "sub_questions": [
             "Which students are registered for Statistics course?",
             "Which students are registered for English course?",
-            "Which students appear in both lists?"
-        ]
+            "Which students appear in both lists?",
+        ],
     },
     {
         "question": "What country did the student John live in?",
         "sub_questions": [
             "Find the address information for student John",
-            "What country is this address located in?"
-        ]
+            "What country is this address located in?",
+        ],
     },
     {
         "question": "Who are the employees with salary above 200,000 certified to operate aircrafts having distance greater than 6000 miles?",
@@ -65,48 +76,49 @@ FEW_SHOT_EXAMPLES = [
             "Which employees have salary above 200,000?",
             "Which aircrafts have distance greater than 6000 miles?",
             "Which employees are certified to operate these aircrafts?",
-            "Find the intersection of these two employee sets"
-        ]
-    }
+            "Find the intersection of these two employee sets",
+        ],
+    },
 ]
 
 
 class QuestionDecomposer:
-    """问题分解器类"""
-    
-    def __init__(self, model: str, temperature: float = 0.0, 
-                 max_retries: int = 3, cache_dir: Optional[str] = None):
-        """
-        初始化分解器
-        
-        Args:
-            model: 使用的模型名称
-            temperature: 温度参数（0表示确定性）
-            max_retries: 最大重试次数
-            cache_dir: 缓存目录路径
-        """
-        self.model = model
-        self.temperature = temperature
-        self.max_retries = max_retries
-        self.cache_dir = Path(cache_dir + "_" + model) if cache_dir else None
-        
+    """基于大模型的问题分解器。"""
+
+    def __init__(
+        self,
+        model: Optional[str] = None,
+        temperature: Optional[float] = None,
+        max_retries: Optional[int] = None,
+        cache_dir: Optional[str] = None,
+    ):
+        """初始化分解器，并绑定模型、重试策略和缓存目录。"""
+        config = Config.DECOMPOSER_CONFIG
+        self.model = model or config["model"]
+        self.temperature = config["temperature"] if temperature is None else temperature
+        self.max_retries = config["max_retries"] if max_retries is None else max_retries
+        self.retry_delay = config["retry_delay"]
+
+        cache_enabled = config.get("cache_enabled", True)
+        resolved_cache_dir = Path(cache_dir) if cache_dir else Path(config["cache_dir"])
+        self.cache_dir = resolved_cache_dir / self.model if cache_enabled else None
+
         if self.cache_dir:
             self.cache_dir.mkdir(parents=True, exist_ok=True)
-        
+
         self.llm = ChatOpenAI(
-            model=model,
-            temperature=temperature,
+            model=self.model,
+            temperature=self.temperature,
+            api_key=Config.OPENAI_API_KEY,
+            base_url=Config.OPENAI_BASE_URL,
         )
-        
+
         self.parser = JsonOutputParser(pydantic_object=SubQuestions)
         self.chain = self._build_chain()
-    
+
     def _build_chain(self):
-        """构建LangChain链"""
-        
-        # 构建few-shot示例部分
-        examples_text = self._format_examples()
-        
+        """构造 LangChain 调用链：提示词 -> 模型 -> JSON 解析器。"""
+        # 系统提示词
         system_prompt = """You are an expert at multi-hop question decomposition. Your task is to decompose complex multi-hop questions into simpler sub-questions that can be answered sequentially.
 
 Key principles:
@@ -117,193 +129,182 @@ Key principles:
 
 Please decompose the given question into sub-questions. Output ONLY valid JSON in the format: {{"sub_questions": [...]}}"""
 
-        human_prompt = "[Question] {question}"
-        
-        template = ChatPromptTemplate.from_messages([
-            ("system", system_prompt),
-            ("human", human_prompt)
-        ])
-        
+        template = ChatPromptTemplate.from_messages(
+            [
+                # few-shot 示例直接拼到 system prompt 中，能提高格式稳定性。
+                ("system", system_prompt + "\n\n" + self._format_examples()),
+                ("human", "[Question] {question}"),
+            ]
+        )
+
         return template | self.llm | self.parser
-    
+
     def _format_examples(self) -> str:
-        """格式化few-shot示例"""
+        """把 few-shot 示例格式化为可拼接进提示词的文本。"""
         examples_text = "[Examples]\n"
         for i, example in enumerate(FEW_SHOT_EXAMPLES, 1):
             examples_text += f"\nExample {i}:\n"
             examples_text += f"Question: {example['question']}\n"
-            examples_text += f"Sub-questions:\n"
-            for j, sq in enumerate(example['sub_questions'], 1):
-                examples_text += f"  {j}. {sq}\n"
+            examples_text += "Sub-questions:\n"
+            for j, sub_question in enumerate(example["sub_questions"], 1):
+                examples_text += f"  {j}. {sub_question}\n"
         return examples_text
-    
+
     def _get_cache_key(self, question: str) -> str:
-        """生成缓存键"""
+        """为原问题生成稳定缓存键。"""
         return hashlib.md5(question.encode()).hexdigest()
-    
+
+    def _normalize_sub_questions(self, sub_questions) -> List[str]:
+        """把模型输出或缓存输出统一清洗为字符串列表。"""
+        normalized = []
+        if not isinstance(sub_questions, list):
+            return normalized
+
+        for item in sub_questions:
+            if isinstance(item, str):
+                text = item.strip()
+            elif isinstance(item, dict):
+                # 兼容历史缓存或模型偶发返回对象结构的情况。
+                text = str(item.get("question") or item.get("sub_question") or item.get("text") or "").strip()
+            else:
+                text = str(item).strip()
+
+            if text:
+                normalized.append(text)
+
+        return normalized
+
     def _load_from_cache(self, question: str) -> Optional[List[str]]:
-        """从缓存加载结果"""
+        """尝试从本地缓存读取问题分解结果。"""
         if not self.cache_dir:
             return None
-        
+
         cache_file = self.cache_dir / f"{self._get_cache_key(question)}.json"
         if cache_file.exists():
             try:
-                with open(cache_file, 'r', encoding='utf-8') as f:
+                with cache_file.open("r", encoding="utf-8") as f:
                     data = json.load(f)
-                    return data.get('sub_questions')
+                    return self._normalize_sub_questions(data.get("sub_questions"))
             except Exception:
                 return None
         return None
-    
+
     def _save_to_cache(self, question: str, sub_questions: List[str]):
-        """保存结果到缓存"""
+        """将分解结果写入本地缓存。"""
         if not self.cache_dir:
             return
-        
+
         cache_file = self.cache_dir / f"{self._get_cache_key(question)}.json"
         try:
-            with open(cache_file, 'w', encoding='utf-8') as f:
-                json.dump({
-                    'question': question,
-                    'sub_questions': sub_questions,
-                    'timestamp': time.time()
-                }, f, ensure_ascii=False, indent=2)
+            with cache_file.open("w", encoding="utf-8") as f:
+                json.dump(
+                    {
+                        "question": question,
+                        "sub_questions": sub_questions,
+                        "timestamp": time.time(),
+                    },
+                    f,
+                    ensure_ascii=False,
+                    indent=2,
+                )
         except Exception as e:
             print(f"[WARNING] Failed to save cache: {e}")
-    
+
     def decompose(self, question: str) -> Optional[List[str]]:
-        """
-        分解单个问题
-        
-        Args:
-            question: 输入问题
-        
-        Returns:
-            子问题列表，或None（失败时）
-        """
-        # 检查缓存
+        """分解单个问题；若失败则在限定次数内重试。"""
         cached_result = self._load_from_cache(question)
         if cached_result:
-            # print(f"[CACHE HIT] Loaded from cache")
             return cached_result
-        
-        # 重试逻辑
+
         for attempt in range(self.max_retries):
             try:
                 result = self.chain.invoke({"question": question})
-                sub_questions = result.get('sub_questions', [])
-                
-                # 验证结果
-                if not isinstance(sub_questions, list) or len(sub_questions) == 0:
+                sub_questions = self._normalize_sub_questions(result.get("sub_questions", []))
+
+                if len(sub_questions) == 0:
                     raise ValueError("Invalid sub_questions format")
-                
+
+                # 过长的子问题链往往会引入噪声，因此做一个上限裁剪。
                 if len(sub_questions) > 5:
                     print(f"[WARNING] Too many sub-questions ({len(sub_questions)}), truncating to 5")
                     sub_questions = sub_questions[:5]
-                
-                # 保存到缓存
+
                 self._save_to_cache(question, sub_questions)
-                
                 return sub_questions
-            
+
             except json.JSONDecodeError as e:
                 print(f"[RETRY {attempt + 1}/{self.max_retries}] JSON parsing error: {e}")
                 if attempt < self.max_retries - 1:
-                    time.sleep(2 ** attempt)  # 指数退避
+                    time.sleep(self.retry_delay * (2**attempt))
                 continue
-            
+
             except Exception as e:
                 print(f"[RETRY {attempt + 1}/{self.max_retries}] Error: {e}")
                 if attempt < self.max_retries - 1:
-                    time.sleep(2 ** attempt)
+                    time.sleep(self.retry_delay * (2**attempt))
                 continue
-        
+
         print(f"[ERROR] Failed to decompose question after {self.max_retries} attempts")
         return None
-    
+
     def decompose_batch(self, questions: List[str], verbose: bool = False) -> Dict[str, Any]:
-        """
-        批量分解问题
-        
-        Args:
-            questions: 问题列表
-            verbose: 是否打印详细信息
-        
-        Returns:
-            包含结果和统计信息的字典
-        """
+        """批量分解问题，并统计成功率。"""
         results = []
         success_count = 0
         failed_count = 0
-        
+
         for i, question in enumerate(questions, 1):
             if verbose:
                 print(f"[{i}/{len(questions)}] Decomposing: {question[:60]}...")
-            
+
             sub_questions = self.decompose(question)
-            
+
             if sub_questions:
-                results.append({
-                    "question": question,
-                    "sub_questions": sub_questions,
-                    "status": "success"
-                })
+                results.append({"question": question, "sub_questions": sub_questions, "status": "success"})
                 success_count += 1
             else:
-                results.append({
-                    "question": question,
-                    "sub_questions": None,
-                    "status": "failed"
-                })
+                results.append({"question": question, "sub_questions": None, "status": "failed"})
                 failed_count += 1
-        
+
         return {
             "total": len(questions),
             "success": success_count,
             "failed": failed_count,
             "success_rate": success_count / len(questions) if questions else 0,
-            "results": results
+            "results": results,
         }
 
 
 def main():
-    """主函数：测试问题分解器"""
-    dotenv.load_dotenv()
-    
-    # 初始化分解器（启用缓存）
-    decomposer = QuestionDecomposer(
-        model = "gpt-5.4",
-        cache_dir="data/decomposition_cache"
-    )
-    
-    # 测试问题
+    """简单的单文件测试入口。"""
+    decomposer = QuestionDecomposer()
+
     test_questions = [
         "What are the names of heads serving as temporary acting heads in departments with rankings better than 5?",
         "Which employee has certificates for aircrafts that have the highest average flying distance, and what is this average flying distance?",
         "List the names of students who have registered for both Statistics and English courses.",
     ]
-    
+
     print("=" * 70)
     print("问题分解器测试")
     print("=" * 70)
-    
+
     for i, question in enumerate(test_questions, 1):
         print(f"\n[问题 {i}]")
         print(f"原始问题: {question}")
         print("-" * 70)
-        
+
         sub_questions = decomposer.decompose(question)
-        
+
         if sub_questions:
             print("分解结果:")
-            for j, sq in enumerate(sub_questions, 1):
-                print(f"  {j}. {sq}")
+            for j, sub_question in enumerate(sub_questions, 1):
+                print(f"  {j}. {sub_question}")
         else:
             print("[ERROR] 分解失败")
-        
+
         print()
-    
+
     print("=" * 70)
 
 

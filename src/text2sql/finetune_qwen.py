@@ -11,6 +11,7 @@ python src/finetune_qwen.py --model_name Qwen/Qwen2.5-3B-Instruct
 
 import argparse
 import json
+import sys
 from pathlib import Path
 from typing import Dict, List
 
@@ -25,34 +26,40 @@ from transformers import (
     TrainingArguments,
 )
 
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
-DEFAULT_TRAIN_FILE = "data/finetuning_train.jsonl"
-DEFAULT_VAL_FILE = "data/finetuning_val.jsonl"
-DEFAULT_OUTPUT_DIR = "outputs/qwen_text2sql_lora"
+from src.utils.config import Config
+
+
+DEFAULT_TRAIN_FILE = str(Config.FINETUNING_TRAIN_JSONL)
+DEFAULT_VAL_FILE = str(Config.FINETUNING_VAL_JSONL)
+DEFAULT_OUTPUT_DIR = str(Config.TEXT2SQL_OUTPUT_DIR)
 
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Fine-tune Qwen for Text-to-SQL with LoRA")
-    parser.add_argument("--model_name", type=str, default="Qwen/Qwen2.5-1.5B-Instruct")
+    parser.add_argument("--model_name", type=str, default=Config.FINETUNING_BASE_MODEL)
     parser.add_argument("--train_file", type=str, default=DEFAULT_TRAIN_FILE)
     parser.add_argument("--val_file", type=str, default=DEFAULT_VAL_FILE)
     parser.add_argument("--output_dir", type=str, default=DEFAULT_OUTPUT_DIR)
-    parser.add_argument("--max_length", type=int, default=1024)
-    parser.add_argument("--num_train_epochs", type=int, default=3)
-    parser.add_argument("--per_device_train_batch_size", type=int, default=2)
-    parser.add_argument("--per_device_eval_batch_size", type=int, default=2)
-    parser.add_argument("--gradient_accumulation_steps", type=int, default=8)
-    parser.add_argument("--learning_rate", type=float, default=2e-4)
-    parser.add_argument("--warmup_steps", type=int, default=100)
-    parser.add_argument("--weight_decay", type=float, default=0.01)
-    parser.add_argument("--logging_steps", type=int, default=20)
-    parser.add_argument("--eval_steps", type=int, default=100)
-    parser.add_argument("--save_steps", type=int, default=100)
-    parser.add_argument("--save_total_limit", type=int, default=2)
-    parser.add_argument("--lora_r", type=int, default=8)
-    parser.add_argument("--lora_alpha", type=int, default=16)
-    parser.add_argument("--lora_dropout", type=float, default=0.05)
-    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--max_length", type=int, default=Config.FINETUNING_CONFIG["max_length"])
+    parser.add_argument("--num_train_epochs", type=int, default=Config.FINETUNING_CONFIG["num_train_epochs"])
+    parser.add_argument("--per_device_train_batch_size", type=int, default=Config.FINETUNING_CONFIG["per_device_train_batch_size"])
+    parser.add_argument("--per_device_eval_batch_size", type=int, default=Config.FINETUNING_CONFIG["per_device_eval_batch_size"])
+    parser.add_argument("--gradient_accumulation_steps", type=int, default=Config.FINETUNING_CONFIG["gradient_accumulation_steps"])
+    parser.add_argument("--learning_rate", type=float, default=Config.FINETUNING_CONFIG["learning_rate"])
+    parser.add_argument("--warmup_steps", type=int, default=Config.FINETUNING_CONFIG["warmup_steps"])
+    parser.add_argument("--weight_decay", type=float, default=Config.FINETUNING_CONFIG["weight_decay"])
+    parser.add_argument("--logging_steps", type=int, default=Config.FINETUNING_CONFIG["logging_steps"])
+    parser.add_argument("--eval_steps", type=int, default=Config.FINETUNING_CONFIG["eval_steps"])
+    parser.add_argument("--save_steps", type=int, default=Config.FINETUNING_CONFIG["save_steps"])
+    parser.add_argument("--save_total_limit", type=int, default=Config.FINETUNING_CONFIG["save_total_limit"])
+    parser.add_argument("--lora_r", type=int, default=Config.FINETUNING_CONFIG["lora_r"])
+    parser.add_argument("--lora_alpha", type=int, default=Config.FINETUNING_CONFIG["lora_alpha"])
+    parser.add_argument("--lora_dropout", type=float, default=Config.FINETUNING_CONFIG["lora_dropout"])
+    parser.add_argument("--seed", type=int, default=Config.DATASET_CONFIG["seed"])
     parser.add_argument("--bf16", action="store_true")
     parser.add_argument("--fp16", action="store_true")
     return parser.parse_args()

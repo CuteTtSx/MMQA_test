@@ -19,9 +19,10 @@ build/
 # Data & Cache
 data/decomposition_cache*/
 data/similarity_cache/
-data/*.json
-data/*.jsonl
+data/
 *.pyc
+.cache/
+tmp_data/
 
 # Environment
 .env
