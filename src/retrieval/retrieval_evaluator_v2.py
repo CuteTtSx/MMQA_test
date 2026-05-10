@@ -211,7 +211,7 @@ class RetrievalEvaluatorV2:
             },
         }
 
-    def print_report(self, evaluation_result: Dict, _verbose: bool = True):
+    def print_report(self, evaluation_result: Dict, verbose: bool = True):
         """打印评估报告。"""
         print("\n" + "=" * 120)
         print(f"检索评估报告 (Top-K={evaluation_result['top_k']})")

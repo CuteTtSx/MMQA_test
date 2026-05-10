@@ -116,7 +116,9 @@ def get_output_file(table_num: int, experiment_type: str, output_file: str) -> s
     config = TABLE_EXPERIMENT_CONFIG[table_num]
     suffix = "two_table" if table_num == 2 else "three_table"
     default_dir = Path(config["default_output_file"]).parent
-    return str(default_dir / f"{experiment_type.lower()}_{suffix}_report.json")
+    # return str(default_dir / f"{experiment_type.lower()}_{suffix}_report.json")
+    return f"{experiment_type.lower()}_{suffix}_report.json"
+
 
 
 def run_retrieval_experiment(

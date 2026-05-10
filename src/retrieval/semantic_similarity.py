@@ -5,10 +5,11 @@ import json
 import re
 import sys
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
-from langchain_community.embeddings import HuggingFaceEmbeddings
+from chromadb import PersistentClient
+from langchain_huggingface import HuggingFaceEmbeddings
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
@@ -26,6 +27,7 @@ class SemanticSimilarityCalculator:
         use_gpu: Optional[bool] = None,
         cache_dir: Optional[str] = None,
         question_table_scoring_method: Optional[str] = None,
+        cache_namespace: Optional[str] = None,
     ):
         config = Config.SIMILARITY_CONFIG
         self.model_name = model_name or config["model_name"]
@@ -36,15 +38,30 @@ class SemanticSimilarityCalculator:
         )
         self.tablellama_use_fp16 = config.get("tablellama_use_fp16", False)
         self.tablellama_max_new_tokens = config.get("tablellama_max_new_tokens", 16)
+        self.embedding_local_path = config.get("embedding_local_path")
+        self.cache_namespace = cache_namespace or config.get("cache_namespace", "default")
 
-        self.embeddings = None
-        self.tablellama_tokenizer = None
-        self.tablellama_model = None
+        self.embeddings: Optional[HuggingFaceEmbeddings] = None
+        self.tablellama_tokenizer: Optional[Any] = None
+        self.tablellama_model: Optional[Any] = None
+        self.vector_client: Optional[Any] = None
+        self.embedding_collection: Optional[Any] = None
 
-        # 缓存路径, 暂时没用
+        # 缓存路径
         self.cache_dir = Path(cache_dir) if cache_dir else None
         if self.cache_dir:
             self.cache_dir.mkdir(parents=True, exist_ok=True)
+
+        self.embedding_persist_enabled = bool(
+            config.get("embedding_persist_enabled", True)
+        )
+        default_chroma_dir = self.cache_dir / "chroma_db" if self.cache_dir else Path("chroma_db")
+        self.chroma_persist_dir = Path(
+            config.get("chroma_persist_dir", default_chroma_dir)
+        )
+        self.chroma_collection_prefix = config.get(
+            "chroma_collection_prefix", "semantic_similarity"
+        )
 
         # 当前主要使用内存缓存，适合在一次实验中反复复用相同文本的 embedding。
         self._embedding_cache = {}
@@ -53,6 +70,7 @@ class SemanticSimilarityCalculator:
         # 根据打分策略初始化模型
         if self.question_table_scoring_method == "embedding_dot":
             self._load_embedding_model()
+            self._init_embedding_store()
         elif self.question_table_scoring_method == "tablellama":
             self._load_tablellama_model()
         else:
@@ -63,14 +81,37 @@ class SemanticSimilarityCalculator:
 
     def _load_embedding_model(self):
         """按需加载 embedding 模型，仅在 embedding_dot 模式下使用。"""
-        print(f"[INFO] 初始化embedding模型: {self.model_name}")
         model_kwargs = {"device": "cuda"} if self.use_gpu else {}
+        local_model_path = Path(self.embedding_local_path) if self.embedding_local_path else None
+
+        if local_model_path and local_model_path.exists():
+            resolved_model_name = str(local_model_path)
+            print(f"[INFO] 初始化本地embedding模型: {resolved_model_name}")
+        else:
+            resolved_model_name = self.model_name
+            print(f"[INFO] 初始化embedding模型: {resolved_model_name}")
+
         self.embeddings = HuggingFaceEmbeddings(
-            model_name=self.model_name,
+            model_name=resolved_model_name,
             encode_kwargs={"normalize_embeddings": True},
             model_kwargs=model_kwargs,
         )
         print("[OK] Embedding模型加载完成")
+
+    def _init_embedding_store(self):
+        """初始化 Chroma 本地持久化存储，用于跨进程复用 embedding。"""
+        if not self.embedding_persist_enabled:
+            return
+        self.chroma_persist_dir.mkdir(parents=True, exist_ok=True)
+        self.vector_client = PersistentClient(path=str(self.chroma_persist_dir))
+        collection_name = self._build_collection_name()
+        self.embedding_collection = self.vector_client.get_or_create_collection(
+            name=collection_name
+        )
+        print(
+            f"[OK] Chroma本地持久化缓存已启用: {self.chroma_persist_dir} | "
+            f"collection={collection_name}"
+        )
 
     def _load_tablellama_model(self):
         try:
@@ -90,7 +131,11 @@ class SemanticSimilarityCalculator:
         torch_dtype = torch.float16 if (self.use_gpu and self.tablellama_use_fp16) else None
         offload_folder = None
         if self.use_gpu:
-            offload_folder = str(self.cache_dir / "tablellama_offload") if self.cache_dir else "tablellama_offload"
+            offload_folder = (
+                str(self.cache_dir / "tablellama_offload")
+                if self.cache_dir
+                else "tablellama_offload"
+            )
             Path(offload_folder).mkdir(parents=True, exist_ok=True)
 
         self.tablellama_model = AutoModelForCausalLM.from_pretrained(
@@ -106,7 +151,60 @@ class SemanticSimilarityCalculator:
         """为文本生成稳定缓存键。"""
         return hashlib.md5(text.encode()).hexdigest()
 
-    def _normalize_text(self, text) -> str:
+    def _build_embedding_cache_key(self, text: str) -> str:
+        """把模型名纳入 key，避免切换 embedding 模型后读到旧向量。"""
+        normalized_text = self._normalize_text(text)
+        raw_key = f"{self.model_name}::{normalized_text}"
+        return self._get_cache_key(raw_key)
+
+    def _sanitize_collection_name(self, name: str) -> str:
+        sanitized = re.sub(r"[^a-zA-Z0-9_-]", "_", name)
+        sanitized = sanitized[:63].strip("_-")
+        return sanitized or "semantic_similarity"
+
+    @staticmethod
+    def sanitize_namespace(namespace: str) -> str:
+        sanitized = re.sub(r"[^a-zA-Z0-9_-]", "_", namespace)
+        return sanitized.strip("_-") or "default"
+
+    @classmethod
+    def build_cache_namespace_from_pool_file(cls, pool_file: str) -> str:
+        pool_path = Path(pool_file)
+        return cls.sanitize_namespace(pool_path.stem)
+
+    def _build_collection_name(self) -> str:
+        namespace = self.sanitize_namespace(self.cache_namespace)
+        model_name = self._sanitize_collection_name(self.model_name)
+        return self._sanitize_collection_name(
+            f"{self.chroma_collection_prefix}_{namespace}_{model_name}"
+        )
+
+    def _load_embedding_from_store(self, cache_key: str) -> Optional[np.ndarray]:
+        if self.embedding_collection is None:
+            return None
+        result = self.embedding_collection.get(ids=[cache_key], include=["embeddings"])
+        if not result.get("ids"):
+            return None
+        embeddings = result.get("embeddings")
+        if embeddings is None:
+            return None
+        if len(embeddings) == 0:
+            return None
+        return np.array(embeddings[0], dtype=np.float32)
+
+    def _save_embedding_to_store(
+        self, cache_key: str, text: str, embedding: np.ndarray
+    ):
+        if self.embedding_collection is None:
+            return
+        self.embedding_collection.upsert(
+            ids=[cache_key],
+            documents=[text],
+            embeddings=[embedding.astype(np.float32).tolist()],
+            metadatas=[{"model_name": self.model_name}],
+        )
+
+    def _normalize_text(self, text: Any) -> str:
         """把输入统一规整成字符串，避免上游脏数据导致 embedding 计算失败。"""
         if isinstance(text, str):
             return text
@@ -115,16 +213,23 @@ class SemanticSimilarityCalculator:
         return str(text)
 
     def _embed_text(self, text: str) -> np.ndarray:
-        """将单段文本编码为 embedding 向量，并使用内存缓存加速。"""
+        """将单段文本编码为 embedding 向量，并结合内存缓存与 Chroma 本地持久化缓存加速。"""
         if self.embeddings is None:
             raise RuntimeError("当前未加载 embedding 模型，请将 question_table_scoring_method 设为 embedding_dot")
 
         text = self._normalize_text(text)
-        cache_key = self._get_cache_key(text)
+        cache_key = self._build_embedding_cache_key(text)
         if cache_key in self._embedding_cache:
             return self._embedding_cache[cache_key]
-        embedding = np.array(self.embeddings.embed_query(text))
+
+        persisted_embedding = self._load_embedding_from_store(cache_key)
+        if persisted_embedding is not None:
+            self._embedding_cache[cache_key] = persisted_embedding
+            return persisted_embedding
+
+        embedding = np.array(self.embeddings.embed_query(text), dtype=np.float32)
         self._embedding_cache[cache_key] = embedding
+        self._save_embedding_to_store(cache_key, text, embedding)
         return embedding
 
     def _format_table_description(self, table_schema: Dict) -> str:
@@ -210,9 +315,10 @@ class SemanticSimilarityCalculator:
 
     def compute_question_table_similarity(self, question: str, table_schema: Dict) -> float:
         """根据配置的方法计算单个问题与单张表之间的语义相似度。"""
+        # 生成式打分方法
         if self.question_table_scoring_method == "tablellama":
             return self._compute_question_table_similarity_with_tablellama(question, table_schema)
-
+        # 向量点积打分
         question_embedding = self._embed_text(question)
         table_description = self._format_table_description(table_schema)
         table_embedding = self._embed_text(table_description)
@@ -231,89 +337,89 @@ class SemanticSimilarityCalculator:
 
     def compute_table_relationship_score(self, table1: Dict, table2: Dict) -> float:
         """计算两张表的拓扑关系强度。"""
-        t1_cols = {col.get("column_name", "") for col in table1.get("table_columns", [])}
-        t2_cols = {col.get("column_name", "") for col in table2.get("table_columns", [])}
-        t1_pk = table1.get("primary_key")
-        t2_pk = table2.get("primary_key")
-        t1_fks = set(table1.get("foreign_keys", []))
-        t2_fks = set(table2.get("foreign_keys", []))
+        # t1_cols = {col.get("column_name", "") for col in table1.get("table_columns", [])}
+        # t2_cols = {col.get("column_name", "") for col in table2.get("table_columns", [])}
+        # t1_pk = table1.get("primary_key")
+        # t2_pk = table2.get("primary_key")
+        # t1_fks = set(table1.get("foreign_keys", []))
+        # t2_fks = set(table2.get("foreign_keys", []))
 
-        has_strong_link = False
+        # has_strong_link = False
 
-        # 1. 表1的外键连到表2的主键，并且相关字段在两张表中都真实存在。
-        if t2_pk and (t2_pk in t1_fks) and (t2_pk in t1_cols) and (t2_pk in t2_cols):
-            has_strong_link = True
+        # # 1. 表1的外键连到表2的主键，并且相关字段在两张表中都真实存在。
+        # if t2_pk and (t2_pk in t1_fks) and (t2_pk in t1_cols) and (t2_pk in t2_cols):
+        #     has_strong_link = True
 
-        # 2. 反向检查：表2的外键连到表1的主键。
-        if t1_pk and (t1_pk in t2_fks) and (t1_pk in t2_cols) and (t1_pk in t1_cols):
-            has_strong_link = True
+        # # 2. 反向检查：表2的外键连到表1的主键。
+        # if t1_pk and (t1_pk in t2_fks) and (t1_pk in t2_cols) and (t1_pk in t1_cols):
+        #     has_strong_link = True
 
-        # 3. 两张表共享外键字段，常见于桥接表或中间关系表。
-        shared_fks = (t1_fks & t2_fks) & t1_cols & t2_cols
-        if shared_fks:
-            has_strong_link = True
-
-        # 当前评分策略比较激进：有强连接直接给 1.0，否则退化为一个低底分 0.1。
-        return 1.0 if has_strong_link else 0.1
-
-        # 下面保留的是旧版更平滑的关系打分逻辑，便于后续回溯实验：
-        # def normalize_name(name: str) -> str:
-        #     if not name:
-        #         return ""
-        #     return name.replace("_", "").replace(" ", "").lower()
-        #
-        # def build_col_map(table: Dict) -> Dict[str, str]:
-        #     mapping = {}
-        #     for col in table.get("table_columns", []):
-        #         original = col.get("column_name", "")
-        #         mapping[normalize_name(original)] = original
-        #     return mapping
-        #
-        # def is_id_like(name: str) -> bool:
-        #     return name == "id" or name.endswith("id")
-        #
-        # t1_col_map = build_col_map(table1)
-        # t2_col_map = build_col_map(table2)
-        # t1_cols = set(t1_col_map.keys())
-        # t2_cols = set(t2_col_map.keys())
-        #
-        # t1_pk = normalize_name(table1.get("primary_key", ""))
-        # t2_pk = normalize_name(table2.get("primary_key", ""))
-        #
-        # raw_t1_fks = {normalize_name(col) for col in table1.get("foreign_keys", []) if col}
-        # raw_t2_fks = {normalize_name(col) for col in table2.get("foreign_keys", []) if col}
-        #
-        # t1_fks = {col for col in raw_t1_fks if col != t1_pk}
-        # t2_fks = {col for col in raw_t2_fks if col != t2_pk}
-        #
-        # t1_is_bridge = (not t1_pk) and len(t1_fks) >= 2
-        # t2_is_bridge = (not t2_pk) and len(t2_fks) >= 2
-        #
-        # t1_to_t2_exact = bool(t2_pk and (t2_pk in t1_fks) and (t2_pk in t1_cols) and (t2_pk in t2_cols))
-        # t2_to_t1_exact = bool(t1_pk and (t1_pk in t2_fks) and (t1_pk in t1_cols) and (t1_pk in t2_cols))
-        #
-        # score = 0.0
-        #
-        # if t1_to_t2_exact and t2_to_t1_exact:
-        #     score = max(score, 1.0)
-        # elif t1_to_t2_exact or t2_to_t1_exact:
-        #     score = max(score, 0.95)
-        #
-        # if (t1_is_bridge and t1_to_t2_exact) or (t2_is_bridge and t2_to_t1_exact):
-        #     score = max(score, 0.9)
-        #
+        # # 3. 两张表共享外键字段，常见于桥接表或中间关系表。
         # shared_fks = (t1_fks & t2_fks) & t1_cols & t2_cols
         # if shared_fks:
-        #     if t1_is_bridge or t2_is_bridge:
-        #         score = max(score, 0.55)
-        #     else:
-        #         score = max(score, 0.25)
-        #
-        # shared_id_like_cols = {col for col in (t1_cols & t2_cols) if is_id_like(col)}
-        # if shared_id_like_cols:
-        #     score = max(score, 0.12)
-        #
-        # return score
+        #     has_strong_link = True
+
+        # # 当前评分策略比较激进：有强连接直接给 1.0，否则退化为一个低底分 0.1。
+        # return 1.0 if has_strong_link else 0.1
+
+        # 下面保留的是旧版更平滑的关系打分逻辑，便于后续回溯实验：
+        def normalize_name(name: str) -> str:
+            if not name:
+                return ""
+            return name.replace("_", "").replace(" ", "").lower()
+        
+        def build_col_map(table: Dict) -> Dict[str, str]:
+            mapping = {}
+            for col in table.get("table_columns", []):
+                original = col.get("column_name", "")
+                mapping[normalize_name(original)] = original
+            return mapping
+        
+        def is_id_like(name: str) -> bool:
+            return name == "id" or name.endswith("id")
+        
+        t1_col_map = build_col_map(table1)
+        t2_col_map = build_col_map(table2)
+        t1_cols = set(t1_col_map.keys())
+        t2_cols = set(t2_col_map.keys())
+        
+        t1_pk = normalize_name(table1.get("primary_key", ""))
+        t2_pk = normalize_name(table2.get("primary_key", ""))
+        
+        raw_t1_fks = {normalize_name(col) for col in table1.get("foreign_keys", []) if col}
+        raw_t2_fks = {normalize_name(col) for col in table2.get("foreign_keys", []) if col}
+        
+        t1_fks = {col for col in raw_t1_fks if col != t1_pk}
+        t2_fks = {col for col in raw_t2_fks if col != t2_pk}
+        
+        t1_is_bridge = (not t1_pk) and len(t1_fks) >= 2
+        t2_is_bridge = (not t2_pk) and len(t2_fks) >= 2
+        
+        t1_to_t2_exact = bool(t2_pk and (t2_pk in t1_fks) and (t2_pk in t1_cols) and (t2_pk in t2_cols))
+        t2_to_t1_exact = bool(t1_pk and (t1_pk in t2_fks) and (t1_pk in t1_cols) and (t1_pk in t2_cols))
+        
+        score = 0.0
+        
+        if t1_to_t2_exact and t2_to_t1_exact:
+            score = max(score, 1.0)
+        elif t1_to_t2_exact or t2_to_t1_exact:
+            score = max(score, 0.95)
+        
+        if (t1_is_bridge and t1_to_t2_exact) or (t2_is_bridge and t2_to_t1_exact):
+            score = max(score, 0.9)
+        
+        shared_fks = (t1_fks & t2_fks) & t1_cols & t2_cols
+        if shared_fks:
+            if t1_is_bridge or t2_is_bridge:
+                score = max(score, 0.55)
+            else:
+                score = max(score, 0.25)
+        
+        shared_id_like_cols = {col for col in (t1_cols & t2_cols) if is_id_like(col)}
+        if shared_id_like_cols:
+            score = max(score, 0.12)
+        
+        return score
 
     def compute_table_relationship_score1(self, table1: Dict, table2: Dict) -> float:
         """
@@ -353,10 +459,20 @@ class SemanticSimilarityCalculator:
         return relationships
 
     def get_cache_stats(self) -> Dict:
-        """返回当前 embedding 内存缓存的统计信息。"""
+        """返回当前 embedding 缓存的统计信息。"""
+        persisted_count = 0
+        if self.embedding_collection is not None:
+            try:
+                persisted_count = self.embedding_collection.count()
+            except Exception:
+                persisted_count = -1
         return {
             "memory_cache_size": len(self._embedding_cache),
             "tablellama_cache_size": len(self._tablellama_score_cache),
+            "embedding_persist_enabled": self.embedding_collection is not None,
+            "cache_namespace": self.cache_namespace,
+            "persisted_embedding_count": persisted_count,
+            "chroma_persist_dir": str(self.chroma_persist_dir) if self.embedding_collection is not None else None,
             "cached_texts": list(self._embedding_cache.keys())[:10],
         }
 
@@ -395,7 +511,7 @@ def main():
     similarities = calculator.compute_question_tables_similarity(test_question, test_tables)
     for table_name, score in similarities:
         print(f"{table_name}: {score:.4f}")
-
+    print(calculator.get_cache_stats())
 
 if __name__ == "__main__":
     main()

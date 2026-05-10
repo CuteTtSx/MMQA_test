@@ -1,9 +1,17 @@
 """
-评估微调后的 Qwen Text-to-SQL LoRA 模型。
+评估 Text-to-SQL 模型。
+
+支持两种评估模式：
+- base: 直接评估原始开源大模型，不加载 LoRA adapter
+- lora: 评估微调后的 LoRA adapter
 
 默认评估：
 - data/finetuning_test.jsonl
-- outputs/qwen_text2sql_lora/final_checkpoint
+
+支持的模型预设：
+- qwen: Qwen/Qwen2.5-1.5B-Instruct 或 FINETUNING_BASE_MODEL
+- deepseek_coder: deepseek-ai/deepseek-coder-1.3b-instruct
+- kimi: moonshotai/Kimi-K2-Instruct
 
 指标：
 1. JSON 格式正确率
@@ -34,18 +42,53 @@ if str(PROJECT_ROOT) not in sys.path:
 from src.utils.config import Config
 
 
-DEFAULT_MODEL_NAME = Config.FINETUNING_BASE_MODEL
-DEFAULT_ADAPTER_PATH = str(Config.TEXT2SQL_FINAL_CHECKPOINT_DIR)
 DEFAULT_TEST_FILE = str(Config.FINETUNING_TEST_JSONL)
-DEFAULT_OUTPUT_FILE = str(Config.TEXT2SQL_EVAL_PREDICTIONS_FILE)
+
+MODEL_PRESETS = {
+    "qwen": {
+        "model_name": Config.FINETUNING_BASE_MODEL,
+        "adapter_path": str(Config.OUTPUTS_DIR / "qwen_text2sql_lora" / "final_checkpoint"),
+        "lora_output_file": str(Config.OUTPUTS_DIR / "qwen_text2sql_lora" / "eval_predictions.jsonl"),
+        "base_output_file": str(Config.OUTPUTS_DIR / "qwen_text2sql_base" / "eval_predictions.jsonl"),
+    },
+    "deepseek_coder": {
+        "model_name": "deepseek-ai/deepseek-coder-1.3b-instruct",
+        "adapter_path": str(Config.OUTPUTS_DIR / "deepseek_coder_text2sql_lora" / "final_checkpoint"),
+        "lora_output_file": str(Config.OUTPUTS_DIR / "deepseek_coder_text2sql_lora" / "eval_predictions.jsonl"),
+        "base_output_file": str(Config.OUTPUTS_DIR / "deepseek_coder_text2sql_base" / "eval_predictions.jsonl"),
+    },
+    "kimi": {
+        "model_name": "moonshotai/Kimi-K2-Instruct",
+        "adapter_path": str(Config.OUTPUTS_DIR / "kimi_text2sql_lora" / "final_checkpoint"),
+        "lora_output_file": str(Config.OUTPUTS_DIR / "kimi_text2sql_lora" / "eval_predictions.jsonl"),
+        "base_output_file": str(Config.OUTPUTS_DIR / "kimi_text2sql_base" / "eval_predictions.jsonl"),
+    },
+}
+
+DEFAULT_MODEL_KEY = "qwen"
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="Evaluate Qwen LoRA model for Text-to-SQL")
-    parser.add_argument("--model_name", type=str, default=DEFAULT_MODEL_NAME)
-    parser.add_argument("--adapter_path", type=str, default=DEFAULT_ADAPTER_PATH)
+    parser = argparse.ArgumentParser(description="Evaluate LoRA model for Text-to-SQL")
+    parser.add_argument(
+        "--model_key",
+        type=str,
+        default=DEFAULT_MODEL_KEY,
+        choices=sorted(MODEL_PRESETS.keys()),
+        help="预设模型：qwen / deepseek_coder / kimi。若传入 --model_name 或 --adapter_path，则手动参数优先。",
+    )
+    parser.add_argument(
+        "--eval_mode",
+        type=str,
+        default="lora",
+        choices=["base", "lora"],
+        help="base 表示直接评估原始模型；lora 表示加载 LoRA adapter 后评估。",
+    )
+    parser.add_argument("--model_name", type=str, default=None)
+    parser.add_argument("--adapter_path", type=str, default=None)
     parser.add_argument("--test_file", type=str, default=DEFAULT_TEST_FILE)
-    parser.add_argument("--output_file", type=str, default=DEFAULT_OUTPUT_FILE)
+    parser.add_argument("--output_file", type=str, default=None)
+    parser.add_argument("--metrics_file", type=str, default=None, help="汇总指标输出 JSON 文件；默认与 output_file 同目录。")
     parser.add_argument("--max_new_tokens", type=int, default=Config.FINETUNING_CONFIG["max_new_tokens"])
     parser.add_argument("--limit", type=int, default=0, help="只评估前 N 条，0 表示全部")
     parser.add_argument("--bf16", action="store_true")
@@ -156,6 +199,13 @@ def save_predictions(path: str, rows: List[Dict]):
             f.write(json.dumps(row, ensure_ascii=False) + "\n")
 
 
+def save_metrics(path: str, metrics: Dict):
+    output_path = Path(path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(output_path, "w", encoding="utf-8") as f:
+        json.dump(metrics, f, ensure_ascii=False, indent=2)
+
+
 def init_bucket() -> Dict:
     return {
         "count": 0,
@@ -205,7 +255,7 @@ def compute_bucket_metrics(bucket: Dict) -> Dict[str, float]:
     }
 
 
-def print_bucket_result(name: str, bucket: Dict):
+def print_bucket_result(name: str, bucket: Dict) -> Dict[str, float]:
     metrics = compute_bucket_metrics(bucket)
     total = bucket["count"]
 
@@ -215,28 +265,52 @@ def print_bucket_result(name: str, bucket: Dict):
     print(f"  Average ROUGE-1:       {metrics['avg_rouge1']:.2f}")
     print(f"  Average ROUGE-L:       {metrics['avg_rouge_l']:.2f}")
     print(f"  Average BLEU:          {metrics['avg_bleu']:.2f}")
+    return {
+        "count": total,
+        "json_ok_count": bucket["json_ok_count"],
+        **metrics,
+    }
+
+
+def resolve_model_args(args) -> Tuple[str, Optional[str], str]:
+    preset = MODEL_PRESETS[args.model_key]
+    model_name = args.model_name or preset["model_name"]
+    adapter_path = args.adapter_path or preset["adapter_path"]
+    default_output_file = preset["lora_output_file"] if args.eval_mode == "lora" else preset["base_output_file"]
+    output_file = args.output_file or default_output_file
+    return model_name, adapter_path, output_file
 
 
 def main():
     args = parse_args()
+    model_name, adapter_path, output_file = resolve_model_args(args)
 
     dtype = torch.bfloat16 if args.bf16 else (torch.float16 if args.fp16 else torch.float32)
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
-    print(f"[INFO] Loading tokenizer: {args.model_name}")
-    tokenizer = AutoTokenizer.from_pretrained(args.adapter_path, trust_remote_code=True)
+    print(f"[INFO] Model preset: {args.model_key}")
+    print(f"[INFO] Evaluation mode: {args.eval_mode}")
+    tokenizer_source = adapter_path if args.eval_mode == "lora" else model_name
+    print(f"[INFO] Loading tokenizer: {tokenizer_source}")
+    tokenizer = AutoTokenizer.from_pretrained(tokenizer_source, trust_remote_code=True)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
-    print(f"[INFO] Loading base model: {args.model_name}")
+    print(f"[INFO] Loading base model: {model_name}")
     base_model = AutoModelForCausalLM.from_pretrained(
-        args.model_name,
+        model_name,
         dtype=dtype,
         trust_remote_code=True,
     )
 
-    print(f"[INFO] Loading LoRA adapter: {args.adapter_path}")
-    model = PeftModel.from_pretrained(base_model, args.adapter_path)
+    if args.eval_mode == "lora":
+        print(f"[INFO] Loading LoRA adapter: {adapter_path}")
+        model = PeftModel.from_pretrained(base_model, adapter_path)
+    else:
+        if args.adapter_path:
+            print("[WARN] --adapter_path is ignored when --eval_mode base")
+        model = base_model
+
     model.to(device)
     model.eval()
 
@@ -280,6 +354,9 @@ def main():
 
         prediction_rows.append(
             {
+                "eval_mode": args.eval_mode,
+                "model_key": args.model_key,
+                "model_name": model_name,
                 "id": item.get("id"),
                 "source": source,
                 "question": item.get("question"),
@@ -300,16 +377,34 @@ def main():
 
     print("\n" + "=" * 80)
     print("Evaluation Results")
+    print(f"Model: {args.model_key} | Mode: {args.eval_mode}")
     print("=" * 80)
-    print_bucket_result("overall", buckets["overall"])
+    bucket_metrics = {
+        "overall": print_bucket_result("overall", buckets["overall"]),
+    }
     print("-" * 80)
-    print_bucket_result("two_table", buckets["two_table"])
+    bucket_metrics["two_table"] = print_bucket_result("two_table", buckets["two_table"])
     print("-" * 80)
-    print_bucket_result("three_table", buckets["three_table"])
+    bucket_metrics["three_table"] = print_bucket_result("three_table", buckets["three_table"])
     print("=" * 80)
 
-    save_predictions(args.output_file, prediction_rows)
-    print(f"[OK] Prediction details saved to: {args.output_file}")
+    metrics_output = {
+        "model_key": args.model_key,
+        "model_name": model_name,
+        "eval_mode": args.eval_mode,
+        "test_file": args.test_file,
+        "limit": args.limit,
+        "max_new_tokens": args.max_new_tokens,
+        "dtype": "bf16" if args.bf16 else ("fp16" if args.fp16 else "fp32"),
+        "prediction_file": output_file,
+        "buckets": bucket_metrics,
+    }
+    metrics_file = args.metrics_file or str(Path(output_file).with_name("eval_metrics.json"))
+
+    save_predictions(output_file, prediction_rows)
+    save_metrics(metrics_file, metrics_output)
+    print(f"[OK] Prediction details saved to: {output_file}")
+    print(f"[OK] Evaluation metrics saved to: {metrics_file}")
 
 
 if __name__ == "__main__":

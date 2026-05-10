@@ -66,6 +66,8 @@ class MultiTableRetriever:
         # 全局表池是检索阶段的候选空间。
         self.table_pool = self._load_table_pool(table_pool_file)
         self.table_pool_file = table_pool_file
+        self.table_id_to_data = self._build_table_id_to_data_map()
+        self.table_id_to_schema = self._build_table_id_to_schema_map()
 
         mtr_config = Config.MTR_CONFIG
         self.num_iterations = mtr_config["num_rounds"] if num_iterations is None else num_iterations
@@ -82,7 +84,14 @@ class MultiTableRetriever:
             self.decomposer = decomposer
 
         if similarity_calculator is None:
-            self.similarity_calculator = SemanticSimilarityCalculator()
+            cache_namespace = (
+                SemanticSimilarityCalculator.build_cache_namespace_from_pool_file(
+                    table_pool_file
+                )
+            )
+            self.similarity_calculator = SemanticSimilarityCalculator(
+                cache_namespace=cache_namespace
+            )
         else:
             self.similarity_calculator = similarity_calculator
 
@@ -124,6 +133,22 @@ class MultiTableRetriever:
         columns = table_data.get("columns", [])
         return f"{table_name}_[{','.join(columns)}]"
 
+    def _build_table_id_to_data_map(self) -> Dict[str, Dict]:
+        """预构建 table_id 到原始表数据的映射，避免后续频繁线性扫描表池。"""
+        table_id_to_data = {}
+        for pool_key, table_data in self.table_pool.items():
+            table_id = self._get_table_unique_id(pool_key, table_data)
+            table_id_to_data[table_id] = table_data
+        return table_id_to_data
+
+    def _build_table_id_to_schema_map(self) -> Dict[str, Dict]:
+        """预构建 table_id 到统一 schema 的映射，避免重复做结构转换。"""
+        table_id_to_schema = {}
+        for pool_key, table_data in self.table_pool.items():
+            table_id = self._get_table_unique_id(pool_key, table_data)
+            table_id_to_schema[table_id] = self._convert_pool_table_to_schema(pool_key, table_data)
+        return table_id_to_schema
+
     def _compute_question_table_similarities(self, question: str) -> Dict[str, float]:
         """
         计算问题与全局表池中所有表的相似度。
@@ -135,10 +160,8 @@ class MultiTableRetriever:
             {table_unique_id: similarity_score, ...}
         """
         similarities = {}
-        for pool_key, table_data in self.table_pool.items():
-            table_schema = self._convert_pool_table_to_schema(pool_key, table_data)
+        for table_id, table_schema in self.table_id_to_schema.items():
             similarity = self.similarity_calculator.compute_question_table_similarity(question, table_schema)
-            table_id = self._get_table_unique_id(pool_key, table_data)
             similarities[table_id] = similarity
         return similarities
 
@@ -148,21 +171,13 @@ class MultiTableRetriever:
         if cache_key in self._relationship_cache:
             return self._relationship_cache[cache_key]
 
-        table1_data = None
-        table2_data = None
-        for pool_key, table_data in self.table_pool.items():
-            table_id = self._get_table_unique_id(pool_key, table_data)
-            if table_id == table_id1:
-                table1_data = table_data
-            elif table_id == table_id2:
-                table2_data = table_data
+        schema1 = self.table_id_to_schema.get(table_id1)
+        schema2 = self.table_id_to_schema.get(table_id2)
 
-        if table1_data is None or table2_data is None:
+        if schema1 is None or schema2 is None:
             return 0.0
 
-        schema1 = self._convert_pool_table_to_schema("", table1_data)
-        schema2 = self._convert_pool_table_to_schema("", table2_data)
-        score = self.similarity_calculator.compute_table_relationship_score1(schema1, schema2)
+        score = self.similarity_calculator.compute_table_relationship_score(schema1, schema2)
         self._relationship_cache[cache_key] = score
         return score
 
@@ -202,11 +217,8 @@ class MultiTableRetriever:
         return table_scores
 
     def _get_table_data_by_id(self, table_id: str):
-        """根据唯一表 id 从表池中取回原始表结构。"""
-        for pool_key, data in self.table_pool.items():
-            if self._get_table_unique_id(pool_key, data) == table_id:
-                return data
-        return None
+        """根据唯一表 id 从缓存映射中取回原始表结构。"""
+        return self.table_id_to_data.get(table_id)
 
     def _format_final_results(self, table_scores: Dict[str, float], top_k: int, retrieval_round: int, verbose: bool) -> List[Dict]:
         """把最终排序结果整理成统一输出结构。"""

@@ -1,0 +1,38 @@
+{
+  "model_key": "kimi_k26",
+  "model_name": "kimi-k2.6",
+  "eval_mode": "api",
+  "api_provider": "aliyun_bailian",
+  "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+  "test_file": "D:\\Programming\\python_study\\MMQA\\data\\finetuning_test.jsonl",
+  "limit": 0,
+  "max_new_tokens": 256,
+  "temperature": 0.0,
+  "prediction_file": "D:\\Programming\\python_study\\MMQA\\outputs\\kimi_k26_text2sql_api\\eval_predictions.jsonl",
+  "buckets": {
+    "overall": {
+      "count": 332,
+      "json_ok_count": 332,
+      "json_rate": 1.0,
+      "avg_rouge1": 74.13955005095367,
+      "avg_rouge_l": 67.85217081095483,
+      "avg_bleu": 49.66658277248329
+    },
+    "two_table": {
+      "count": 255,
+      "json_ok_count": 255,
+      "json_rate": 1.0,
+      "avg_rouge1": 72.39153412952021,
+      "avg_rouge_l": 66.57578089288312,
+      "avg_bleu": 46.94541732623489
+    },
+    "three_table": {
+      "count": 77,
+      "json_ok_count": 77,
+      "json_rate": 1.0,
+      "avg_rouge1": 79.92843394660993,
+      "avg_rouge_l": 72.07917638378969,
+      "avg_bleu": 58.67823457499424
+    }
+  }
+}

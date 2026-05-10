@@ -1,0 +1,38 @@
+{
+  "model_key": "minimax_m25",
+  "model_name": "MiniMax-M2.5",
+  "eval_mode": "api",
+  "api_provider": "aliyun_bailian",
+  "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+  "test_file": "D:\\Programming\\python_study\\MMQA\\data\\finetuning_test.jsonl",
+  "limit": 0,
+  "max_new_tokens": 256,
+  "temperature": 0.0,
+  "prediction_file": "D:\\Programming\\python_study\\MMQA\\outputs\\minimax_m25_text2sql_api\\eval_predictions.jsonl",
+  "buckets": {
+    "overall": {
+      "count": 332,
+      "json_ok_count": 332,
+      "json_rate": 1.0,
+      "avg_rouge1": 75.17820432463995,
+      "avg_rouge_l": 68.72523486821419,
+      "avg_bleu": 50.64439005077593
+    },
+    "two_table": {
+      "count": 255,
+      "json_ok_count": 255,
+      "json_rate": 1.0,
+      "avg_rouge1": 73.16616190277078,
+      "avg_rouge_l": 67.27004246644287,
+      "avg_bleu": 47.74790145267769
+    },
+    "three_table": {
+      "count": 77,
+      "json_ok_count": 77,
+      "json_rate": 1.0,
+      "avg_rouge1": 81.84146169576505,
+      "avg_rouge_l": 73.54437853641808,
+      "avg_bleu": 60.23665748603633
+    }
+  }
+}

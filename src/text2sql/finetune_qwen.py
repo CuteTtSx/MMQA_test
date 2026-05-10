@@ -1,8 +1,11 @@
 """
-Qwen Text-to-SQL LoRA 微调脚本。
+通用 Text-to-SQL LoRA 微调脚本。
 
 使用方式示例：
-python src/finetune_qwen.py --model_name Qwen/Qwen2.5-3B-Instruct
+python src/text2sql/finetune_qwen.py --model_key qwen
+python src/text2sql/finetune_qwen.py --model_key deepseek_coder
+python src/text2sql/finetune_qwen.py --model_key minimax
+python src/text2sql/finetune_qwen.py --model_name Qwen/Qwen2.5-3B-Instruct --output_dir outputs/custom_text2sql_lora
 
 默认读取：
 - data/finetuning_train.jsonl
@@ -35,15 +38,38 @@ from src.utils.config import Config
 
 DEFAULT_TRAIN_FILE = str(Config.FINETUNING_TRAIN_JSONL)
 DEFAULT_VAL_FILE = str(Config.FINETUNING_VAL_JSONL)
-DEFAULT_OUTPUT_DIR = str(Config.TEXT2SQL_OUTPUT_DIR)
+
+MODEL_PRESETS = {
+    "qwen": {
+        "model_name": Config.FINETUNING_BASE_MODEL,
+        "output_dir": str(Config.OUTPUTS_DIR / "qwen_text2sql_lora"),
+    },
+    "deepseek_coder": {
+        "model_name": "deepseek-ai/deepseek-coder-1.3b-instruct",
+        "output_dir": str(Config.OUTPUTS_DIR / "deepseek_coder_text2sql_lora"),
+    },
+    "minimax": {
+        "model_name": "MiniMaxAI/MiniMax-M2",
+        "output_dir": str(Config.OUTPUTS_DIR / "minimax_text2sql_lora"),
+    },
+}
+
+DEFAULT_MODEL_KEY = "qwen"
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="Fine-tune Qwen for Text-to-SQL with LoRA")
-    parser.add_argument("--model_name", type=str, default=Config.FINETUNING_BASE_MODEL)
+    parser = argparse.ArgumentParser(description="Fine-tune an open-source LLM for Text-to-SQL with LoRA")
+    parser.add_argument(
+        "--model_key",
+        type=str,
+        default=DEFAULT_MODEL_KEY,
+        choices=sorted(MODEL_PRESETS.keys()),
+        help="预设模型：qwen / deepseek_coder / minimax。若同时传入 --model_name，则以 --model_name 为准。",
+    )
+    parser.add_argument("--model_name", type=str, default=None)
     parser.add_argument("--train_file", type=str, default=DEFAULT_TRAIN_FILE)
     parser.add_argument("--val_file", type=str, default=DEFAULT_VAL_FILE)
-    parser.add_argument("--output_dir", type=str, default=DEFAULT_OUTPUT_DIR)
+    parser.add_argument("--output_dir", type=str, default=None)
     parser.add_argument("--max_length", type=int, default=Config.FINETUNING_CONFIG["max_length"])
     parser.add_argument("--num_train_epochs", type=int, default=Config.FINETUNING_CONFIG["num_train_epochs"])
     parser.add_argument("--per_device_train_batch_size", type=int, default=Config.FINETUNING_CONFIG["per_device_train_batch_size"])
@@ -96,29 +122,36 @@ def build_dataset(records: List[Dict], tokenizer: AutoTokenizer, max_length: int
     dataset = Dataset.from_dict({"text": formatted_texts})
 
     def tokenize_fn(batch):
-        tokenized = tokenizer(
+        return tokenizer(
             batch["text"],
             truncation=True,
             max_length=max_length,
             padding=False,
         )
-        tokenized["labels"] = tokenized["input_ids"].copy()
-        return tokenized
 
     return dataset.map(tokenize_fn, batched=True, remove_columns=["text"])
 
 
+def resolve_model_args(args):
+    preset = MODEL_PRESETS[args.model_key]
+    model_name = args.model_name or preset["model_name"]
+    output_dir = args.output_dir or preset["output_dir"]
+    return model_name, output_dir
+
+
 def main():
     args = parse_args()
+    model_name, output_dir_value = resolve_model_args(args)
 
-    print(f"[INFO] Loading tokenizer: {args.model_name}")
-    tokenizer = AutoTokenizer.from_pretrained(args.model_name, trust_remote_code=True)
+    print(f"[INFO] Model preset: {args.model_key}")
+    print(f"[INFO] Loading tokenizer: {model_name}")
+    tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
-    print(f"[INFO] Loading model: {args.model_name}")
+    print(f"[INFO] Loading model: {model_name}")
     model = AutoModelForCausalLM.from_pretrained(
-        args.model_name,
+        model_name,
         dtype=torch.bfloat16 if args.bf16 else (torch.float16 if args.fp16 else torch.float32),
         trust_remote_code=True,
     )
@@ -143,7 +176,7 @@ def main():
     train_dataset = build_dataset(train_records, tokenizer, args.max_length)
     val_dataset = build_dataset(val_records, tokenizer, args.max_length)
 
-    output_dir = Path(args.output_dir)
+    output_dir = Path(output_dir_value)
     output_dir.mkdir(parents=True, exist_ok=True)
 
     training_args = TrainingArguments(

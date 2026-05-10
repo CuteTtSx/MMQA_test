@@ -36,6 +36,7 @@ class Config:
 
     OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
     OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
+    DASHSCOPE_API_KEY = os.getenv("DASHSCOPE_API_KEY")
 
     DECOMPOSER_MODEL = os.getenv("DECOMPOSER_MODEL", "gpt-4o-mini")
     EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "BAAI/bge-base-en-v1.5")
@@ -103,14 +104,19 @@ class Config:
         "cache_enabled": True,
         "cache_dir": DECOMPOSITION_CACHE_DIR,
     }
-
-    SIMILARITY_SCORING_METHOD = os.getenv("QUESTION_TABLE_SCORING_METHOD", "tablellama")
+    
+    SIMILARITY_SCORING_METHOD = "embedding_dot" # 默认是embedding_dot
 
     SIMILARITY_CONFIG = {
         "question_table_scoring_method": SIMILARITY_SCORING_METHOD,  # embedding_dot 是点积; tablellama 是模型计算
         "model_name": TABLE_MODEL if SIMILARITY_SCORING_METHOD == "tablellama" else EMBEDDING_MODEL,
+        # "embedding_local_path": SIMILARITY_CACHE_DIR / "models" / "bge-base-en-v1.5",
+        "embedding_local_path": r"E:\programEdit\huggingface_cache\hub\models--BAAI--bge-base-en-v1.5\snapshots\a5beb1e3e68b9ab74eb54cfd186867f64f240e1a",
         "use_gpu": True,
         "cache_dir": SIMILARITY_CACHE_DIR,
+        "embedding_persist_enabled": True,
+        "chroma_persist_dir": SIMILARITY_CACHE_DIR / "chroma_db",
+        "chroma_collection_prefix": "semantic_similarity",
         "tablellama_use_fp16": True,
         "tablellama_max_new_tokens": 16,
     }

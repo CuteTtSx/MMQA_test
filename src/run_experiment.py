@@ -6,7 +6,7 @@
 2. text2sql  -> Text-to-SQL 模型评估
 
 示例：
-- python src/run_experiment.py --experiment retrieval --experiment_type E1 --table_num 3
+- python src/run_experiment.py --experiment retrieval --experiment_type E3 --table_num 3
 - python src/run_experiment.py --experiment retrieval --experiment_type E5_HYBRID_LOCAL --table_num 3 --limit 100
 - python src/run_experiment.py --experiment text2sql --fp16 --limit 20
 """
