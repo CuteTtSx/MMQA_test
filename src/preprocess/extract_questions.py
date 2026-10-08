@@ -3,21 +3,21 @@
 
 功能：
 1. 从原始 Synthesized_two_table / Synthesized_three_table 数据中提取问题级样本。
-2. 为每条样本生成统一字段，包括问题、SQL、答案和关联表 id。
+2. 为每条样本生成统一字段，包括问题、SQL、答案、关联表 id 和子问题序列。
 3. 保持原始样本顺序输出，供检索与 Text-to-SQL 共用。
 """
 
 import json
 import sys
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, List, Optional
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from src.retrieval.question_decomposer import QuestionDecomposer
 from src.utils.config import Config
-
 
 
 def make_unique_table_id(table_name: str, columns) -> str:
@@ -25,7 +25,18 @@ def make_unique_table_id(table_name: str, columns) -> str:
     return f"{table_name}_[{','.join(columns)}]"
 
 
-def extract_questions_from_file(input_file, output_file) -> Dict[str, Any]:
+def build_sub_questions(question: Optional[str], decomposer: Optional[QuestionDecomposer]) -> List[str]:
+    """为问题生成子问题序列；若失败则返回空列表。"""
+    if not question or decomposer is None:
+        return []
+
+    sub_questions = decomposer.decompose(question)
+    return sub_questions or []
+
+
+def extract_questions_from_file(
+    input_file, output_file, decomposer: Optional[QuestionDecomposer] = None
+) -> Dict[str, Any]:
     """从单个原始数据文件中提取问题样本并保存为标准化 QA 文件。"""
     input_path = Path(input_file)
     output_path = Path(output_file)
@@ -46,6 +57,7 @@ def extract_questions_from_file(input_file, output_file) -> Dict[str, Any]:
             unique_table_ids = []
             table_names = item.get("table_names", [])
             tables_data = item.get("tables", [])
+            question_text = item.get("Question")
 
             for i, table_name in enumerate(table_names):
                 # 防止 table_names 与 tables 长度不一致导致越界。
@@ -58,7 +70,8 @@ def extract_questions_from_file(input_file, output_file) -> Dict[str, Any]:
             questions.append(
                 {
                     "id": item.get("id_"),
-                    "question": item.get("Question"),
+                    "question": question_text,
+                    "sub_questions": build_sub_questions(question_text, decomposer),
                     "sql": item.get("SQL"),
                     "table_ids": unique_table_ids,
                     "table_names": table_names,
@@ -98,9 +111,10 @@ def main():
 
     results = []
     total_questions = 0
+    decomposer = QuestionDecomposer()
 
     for input_file, output_file in Config.get_question_extraction_tasks():
-        result = extract_questions_from_file(input_file, output_file)
+        result = extract_questions_from_file(input_file, output_file, decomposer=decomposer)
         results.append(result)
 
         if result["status"] == "success":

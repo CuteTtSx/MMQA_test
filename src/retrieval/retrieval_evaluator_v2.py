@@ -63,8 +63,10 @@ class RetrievalEvaluatorV2:
         self,
         retrieved_tables: List[Dict],
         ground_truth_tables: Set[str],
+        top_k_per_round : int,
         question_id: int = 0,
         question: str = "",
+        matched_count_override: Optional[int] = None,
     ) -> RetrievalMetricsV2:
         """评估单个问题的检索结果。"""
         retrieved_ids = [t["table_id"] for t in retrieved_tables]  # 唯一表 id 列表
@@ -72,12 +74,14 @@ class RetrievalEvaluatorV2:
         retrieved_ids_set = set(retrieved_ids)
 
         # 计算基础指标。
-        matched = len(retrieved_ids_set & ground_truth_tables)
+        matched = matched_count_override if matched_count_override is not None else len(retrieved_ids_set & ground_truth_tables)
+ 
         # 当实际返回数量小于真实表数量时，用较小值作为 Recall 分母，避免惩罚策略不一致。
         gt_count = len(ground_truth_tables) if top_k >= len(ground_truth_tables) else top_k
-
         recall = matched / gt_count if gt_count > 0 else 0.0
-        precision = matched / top_k if top_k > 0 else 0.0
+        precision = matched / top_k_per_round 
+        # precision = matched / top_k if top_k > 0 else 0.0
+
         f1 = self._compute_f1(precision, recall)
 
         mrr = self._compute_mrr(retrieved_ids, ground_truth_tables)
@@ -108,7 +112,7 @@ class RetrievalEvaluatorV2:
             all_match_ranks=all_match_ranks,
         )
 
-    def evaluate_batch(self, results: List[Dict]) -> Dict:
+    def evaluate_batch(self, results: List[Dict], recall_mode: str = "overlap_ratio") -> Dict:
         """批量评估一组问题的检索结果。"""
         all_metrics = []
 
@@ -117,8 +121,17 @@ class RetrievalEvaluatorV2:
             question = result.get("question", "")
             ground_truth = set(result.get("ground_truth_tables", []))
             retrieved = result.get("retrieved_tables", [])
+            top_k_per_round = result.get("top_k_per_round")
+            matched_count = result.get("matched_count")
 
-            metrics = self.evaluate_single(retrieved, ground_truth, question_id, question)
+            metrics = self.evaluate_single(
+                retrieved,
+                ground_truth,
+                top_k_per_round,
+                question_id,
+                question,
+                matched_count_override=matched_count,
+            )
             all_metrics.append(metrics)
 
         avg_metrics = self._compute_average_metrics(all_metrics)

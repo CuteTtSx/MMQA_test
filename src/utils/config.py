@@ -82,17 +82,14 @@ class Config:
 
     MTR_CONFIG = {
         "top_k": 3,
-        "num_rounds": 2,
-        "top_k_per_round": 10,
         "similarity_threshold": 0.5,
         "question_weight": 0.7,
         "table_weight": 0.3,
-        "retrieval_mode": "current",
         "hybrid_gap12_threshold": 0.015,
         "hybrid_gap13_threshold": 0.03,
         "hybrid_rerank_alpha": 0.75,
         "hybrid_rerank_beta": 0.25,
-        "hybrid_expand_per_seed": 2,
+        "hybrid_expand_per_seed": 3,
     }
 
     DECOMPOSER_CONFIG = {
@@ -106,6 +103,7 @@ class Config:
     }
     
     SIMILARITY_SCORING_METHOD = "embedding_dot" # 默认是embedding_dot
+    # SIMILARITY_SCORING_METHOD = "tablellama"
 
     SIMILARITY_CONFIG = {
         "question_table_scoring_method": SIMILARITY_SCORING_METHOD,  # embedding_dot 是点积; tablellama 是模型计算
@@ -148,16 +146,34 @@ class Config:
         return cls.DATA_DIR / filename
 
     @classmethod
+    def normalize_model_name(cls, model_name: str | None = None) -> str:
+        """将模型名规范化为适合目录名的形式。"""
+        raw = (model_name or cls.DECOMPOSER_CONFIG["model"] or "default").strip()
+        normalized = raw.replace("/", "_").replace("\\", "_").replace(":", "_")
+        return normalized
+
+    @classmethod
+    def get_mtr_model_output_dir(cls, model_name: str | None = None) -> Path:
+        """返回按问题分解器模型划分的 MTR 输出目录。"""
+        model_dir = cls.MTR_OUTPUT_DIR / cls.normalize_model_name(model_name)
+        model_dir.mkdir(parents=True, exist_ok=True)
+        return model_dir
+
+    @classmethod
+    def get_mtr_output_path(cls, filename: str, model_name: str | None = None) -> Path:
+        return cls.get_mtr_model_output_dir(model_name) / filename
+
+    @classmethod
+    def get_legacy_mtr_output_path(cls, filename: str) -> Path:
+        return cls.MTR_OUTPUT_DIR / filename
+
+    @classmethod
     def get_tmp_data_path(cls, filename: str) -> Path:
         return cls.TMP_DATA_DIR / filename
 
     @classmethod
     def get_output_path(cls, filename: str) -> Path:
         return cls.OUTPUTS_DIR / filename
-
-    @classmethod
-    def get_mtr_output_path(cls, filename: str) -> Path:
-        return cls.MTR_OUTPUT_DIR / filename
 
     @classmethod
     def get_text2sql_output_path(cls, filename: str) -> Path:

@@ -24,14 +24,51 @@ if str(PROJECT_ROOT) not in sys.path:
 from src.utils.config import Config
 
 
+def load_data_list(file_path):
+    """读取 JSON 文件，并兼容最外层为 dict 包装的情况。"""
+    path = Path(file_path)
+    with path.open("r", encoding="utf-8") as f:
+        data = json.load(f)
+
+    if isinstance(data, dict):
+        for value in data.values():
+            if isinstance(value, list):
+                data = value
+                break
+
+    if not isinstance(data, list):
+        raise ValueError(f"数据格式异常，无法在 {path} 中找到数据列表。")
+
+    return data
+
+
+def print_first_item_without_table_content(file_path):
+    """格式化打印第一条数据，保留全部字段，仅去除 table_content/table_contents。"""
+    path = Path(file_path)
+    print(f"正在加载文件: {path} ...")
+    data = load_data_list(path)
+
+    if not data:
+        print("文件中没有数据。")
+        return
+
+    first_item = copy.deepcopy(data[0])
+    # for table in first_item.get("tables", []):
+    #     if isinstance(table, dict):
+    #         table.pop("table_content", None)
+    #         table.pop("table_contents", None)
+
+    print("================ 第一条原始数据（去除 table_content） ================")
+    print(json.dumps(first_item, indent=4, ensure_ascii=False))
+
+
 def save_tables_info(input_file_path, output_file_path):
     """删除原始样本中的大字段，只保留精简后的 schema 信息。"""
     input_path = Path(input_file_path)
     output_path = Path(output_file_path)
 
     print(f"正在加载大文件: {input_path} ...")
-    with input_path.open("r", encoding="utf-8") as f:
-        data = json.load(f)
+    data = load_data_list(input_path)
     print(f"加载成功, 数据集中共有 {len(data)} 条多表查询样本。\n")
 
     for item in data:
@@ -62,19 +99,7 @@ def get_table_nums(file_path):
     """统计某个数据文件中按“表名+列名”去重后的唯一表数量。"""
     path = Path(file_path)
     print(f"正在加载大文件: {path} ...")
-    with path.open("r", encoding="utf-8") as f:
-        data = json.load(f)
-
-    # 兼容某些可能带最外层字典包装的数据格式。
-    if isinstance(data, dict):
-        for value in data.values():
-            if isinstance(value, list):
-                data = value
-                break
-
-    if not isinstance(data, list):
-        print("数据格式异常，无法找到数据列表。")
-        return
+    data = load_data_list(path)
 
     print(f"加载成功！数据集中共有 {len(data)} 条多表查询样本")
     print("================ 全局表格统计 ================")
@@ -101,9 +126,9 @@ def get_table_nums(file_path):
 def main():
     """按配置依次生成二表和三表数据的精简 schema 文件。"""
     for input_file, output_file in Config.get_schema_extraction_tasks():
-        save_tables_info(input_file, output_file)
-        # get_table_nums(input_file)
-
+        # save_tables_info(input_file, output_file)
+        get_table_nums(input_file)
+        # print_first_item_without_table_content(input_file)
 
 if __name__ == "__main__":
     main()

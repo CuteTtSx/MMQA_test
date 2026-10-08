@@ -76,7 +76,6 @@ def main():
     print("[INFO] 初始化MTR检索器...")
     retriever = MultiTableRetriever(
         table_pool_file="data/global_table_pool_three.json",
-        num_iterations=4,
         top_k_per_round=10
     )
     

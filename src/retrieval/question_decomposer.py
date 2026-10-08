@@ -16,6 +16,7 @@ import hashlib
 import json
 import sys
 import time
+import random
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -30,10 +31,8 @@ from pydantic import BaseModel, Field
 
 from src.utils.config import Config
 
-
 class SubQuestions(BaseModel):
     """定义问题分解后的标准输出结构。"""
-
     sub_questions: List[str] = Field(..., description="拆解后的一系列子问题列表")
 
 
@@ -81,9 +80,8 @@ FEW_SHOT_EXAMPLES = [
     },
 ]
 
-
 class QuestionDecomposer:
-    """基于大模型的问题分解器。"""
+    """基于大模型的问题分解器"""
 
     def __init__(
         self,
@@ -94,18 +92,20 @@ class QuestionDecomposer:
     ):
         """初始化分解器，并绑定模型、重试策略和缓存目录。"""
         config = Config.DECOMPOSER_CONFIG
-        self.model = model or config["model"]
-        self.temperature = config["temperature"] if temperature is None else temperature
-        self.max_retries = config["max_retries"] if max_retries is None else max_retries
-        self.retry_delay = config["retry_delay"]
+        self.model = model or config["model"] # 模型名
+        self.temperature = config["temperature"] if temperature is None else temperature # 温度
+        self.max_retries = config["max_retries"] if max_retries is None else max_retries # 最大重试次数
+        self.retry_delay = config["retry_delay"] # 基本退避时间, 默认1s
 
-        cache_enabled = config.get("cache_enabled", True)
-        resolved_cache_dir = Path(cache_dir) if cache_dir else Path(config["cache_dir"])
+        # 是否启用本地缓存
+        cache_enabled = config.get("cache_enabled", True) 
+        resolved_cache_dir = Path(cache_dir) if cache_dir else Path(config["cache_dir"]) 
         self.cache_dir = resolved_cache_dir / self.model if cache_enabled else None
 
         if self.cache_dir:
             self.cache_dir.mkdir(parents=True, exist_ok=True)
-
+        
+        # 初始化模型接口
         self.llm = ChatOpenAI(
             model=self.model,
             temperature=self.temperature,
@@ -115,29 +115,6 @@ class QuestionDecomposer:
 
         self.parser = JsonOutputParser(pydantic_object=SubQuestions)
         self.chain = self._build_chain()
-
-    def _build_chain(self):
-        """构造 LangChain 调用链：提示词 -> 模型 -> JSON 解析器。"""
-        # 系统提示词
-        system_prompt = """You are an expert at multi-hop question decomposition. Your task is to decompose complex multi-hop questions into simpler sub-questions that can be answered sequentially.
-
-Key principles:
-1. Break down complex questions into 2-5 simpler sub-questions
-2. Each sub-question should be answerable independently
-3. The sub-questions should logically lead to answering the original question
-4. Maintain the semantic meaning and intent of the original question
-
-Please decompose the given question into sub-questions. Output ONLY valid JSON in the format: {{"sub_questions": [...]}}"""
-
-        template = ChatPromptTemplate.from_messages(
-            [
-                # few-shot 示例直接拼到 system prompt 中，能提高格式稳定性。
-                ("system", system_prompt + "\n\n" + self._format_examples()),
-                ("human", "[Question] {question}"),
-            ]
-        )
-
-        return template | self.llm | self.parser
 
     def _format_examples(self) -> str:
         """把 few-shot 示例格式化为可拼接进提示词的文本。"""
@@ -150,9 +127,29 @@ Please decompose the given question into sub-questions. Output ONLY valid JSON i
                 examples_text += f"  {j}. {sub_question}\n"
         return examples_text
 
-    def _get_cache_key(self, question: str) -> str:
-        """为原问题生成稳定缓存键。"""
-        return hashlib.md5(question.encode()).hexdigest()
+    def _build_chain(self):
+        """构造 LangChain 调用链：提示词 -> 模型 -> JSON 解析器。"""
+        # 系统提示词
+        system_prompt = """You are an expert at multi-hop question decomposition. Your task is to decompose complex multi-hop questions into simpler sub-questions that can be answered sequentially.
+
+Key principles:
+1. Break down complex questions into 2-5 simpler sub-questions
+2. Each sub-question should be answerable independently
+3. The sub-questions should logically lead to answering the original question
+4. Maintain the semantic meaning and intent of the original question
+
+Please decompose the given question into sub-questions. Output ONLY valid JSON in the format: {{"sub_questions": [...]}}
+"""
+
+        template = ChatPromptTemplate.from_messages(
+            [
+                # few-shot 示例拼到 system prompt 中，提高格式稳定性。
+                ("system", system_prompt + "\n\n" + self._format_examples()),
+                ("human", "[Question] {question}"),
+            ]
+        )
+
+        return template | self.llm | self.parser
 
     def _normalize_sub_questions(self, sub_questions) -> List[str]:
         """把模型输出或缓存输出统一清洗为字符串列表。"""
@@ -173,6 +170,10 @@ Please decompose the given question into sub-questions. Output ONLY valid JSON i
                 normalized.append(text)
 
         return normalized
+
+    def _get_cache_key(self, question: str) -> str:
+        """为原问题生成稳定缓存键。"""
+        return hashlib.md5(question.encode()).hexdigest()
 
     def _load_from_cache(self, question: str) -> Optional[List[str]]:
         """尝试从本地缓存读取问题分解结果。"""
@@ -210,15 +211,24 @@ Please decompose the given question into sub-questions. Output ONLY valid JSON i
         except Exception as e:
             print(f"[WARNING] Failed to save cache: {e}")
 
+    def get_sleep_time(self, attempt: int):
+        """退避时间"""
+        r = random.randint(0, 2**attempt-1)
+        return self.retry_delay * r
+
     def decompose(self, question: str) -> Optional[List[str]]:
         """分解单个问题；若失败则在限定次数内重试。"""
+        # 1. 本地缓存命中, 直接返回
         cached_result = self._load_from_cache(question)
         if cached_result:
             return cached_result
 
+        # 2. 尝试调用llm问题分解
         for attempt in range(self.max_retries):
             try:
+                # 2.1 发起请求
                 result = self.chain.invoke({"question": question})
+                # 2.2 提取llm返回内容
                 sub_questions = self._normalize_sub_questions(result.get("sub_questions", []))
 
                 if len(sub_questions) == 0:
@@ -228,20 +238,23 @@ Please decompose the given question into sub-questions. Output ONLY valid JSON i
                 if len(sub_questions) > 5:
                     print(f"[WARNING] Too many sub-questions ({len(sub_questions)}), truncating to 5")
                     sub_questions = sub_questions[:5]
-
+                    
+                # 2.3 保存缓存
                 self._save_to_cache(question, sub_questions)
+
                 return sub_questions
 
             except json.JSONDecodeError as e:
                 print(f"[RETRY {attempt + 1}/{self.max_retries}] JSON parsing error: {e}")
+                # 二进制指数退避
                 if attempt < self.max_retries - 1:
-                    time.sleep(self.retry_delay * (2**attempt))
+                    time.sleep(self.get_sleep_time(attempt))
                 continue
 
             except Exception as e:
                 print(f"[RETRY {attempt + 1}/{self.max_retries}] Error: {e}")
                 if attempt < self.max_retries - 1:
-                    time.sleep(self.retry_delay * (2**attempt))
+                    time.sleep(self.get_sleep_time(attempt))
                 continue
 
         print(f"[ERROR] Failed to decompose question after {self.max_retries} attempts")

@@ -1,4 +1,4 @@
-"""语义相似度计算模块，支持 embedding 点积与 TableLlama 生成式打分。"""
+"""语义相似度计算模块，主要支持 embedding 点积打分, TableLlama 生成式打分"""
 
 import hashlib
 import json
@@ -30,12 +30,13 @@ class SemanticSimilarityCalculator:
         cache_namespace: Optional[str] = None,
     ):
         config = Config.SIMILARITY_CONFIG
-        self.model_name = model_name or config["model_name"]
-        self.use_gpu = config["use_gpu"] if use_gpu is None else use_gpu
-        cache_dir = cache_dir or str(config["cache_dir"])
+
+        self.model_name = model_name or config["model_name"] # 模型名称
+        self.use_gpu = config["use_gpu"] if use_gpu is None else use_gpu # 是否使用gpu
+        cache_dir = cache_dir or str(config["cache_dir"]) # 缓存路径
         self.question_table_scoring_method = question_table_scoring_method or config.get(
             "question_table_scoring_method", "embedding_dot"
-        )
+        ) 
         self.tablellama_use_fp16 = config.get("tablellama_use_fp16", False)
         self.tablellama_max_new_tokens = config.get("tablellama_max_new_tokens", 16)
         self.embedding_local_path = config.get("embedding_local_path")
@@ -48,13 +49,13 @@ class SemanticSimilarityCalculator:
         self.embedding_collection: Optional[Any] = None
 
         # 缓存路径
-        self.cache_dir = Path(cache_dir) if cache_dir else None
-        if self.cache_dir:
-            self.cache_dir.mkdir(parents=True, exist_ok=True)
-
         self.embedding_persist_enabled = bool(
             config.get("embedding_persist_enabled", True)
         )
+
+        self.cache_dir = Path(cache_dir) if cache_dir else None
+        if self.cache_dir:
+            self.cache_dir.mkdir(parents=True, exist_ok=True)
         default_chroma_dir = self.cache_dir / "chroma_db" if self.cache_dir else Path("chroma_db")
         self.chroma_persist_dir = Path(
             config.get("chroma_persist_dir", default_chroma_dir)
@@ -63,14 +64,14 @@ class SemanticSimilarityCalculator:
             "chroma_collection_prefix", "semantic_similarity"
         )
 
-        # 当前主要使用内存缓存，适合在一次实验中反复复用相同文本的 embedding。
+        # 内存缓存，适合在一次实验中反复复用相同文本的 embedding
         self._embedding_cache = {}
         self._tablellama_score_cache = {}
 
         # 根据打分策略初始化模型
         if self.question_table_scoring_method == "embedding_dot":
-            self._load_embedding_model()
-            self._init_embedding_store()
+            self._load_embedding_model() # 初始化embedding模型
+            self._init_embedding_store() # 初始化向量数据库
         elif self.question_table_scoring_method == "tablellama":
             self._load_tablellama_model()
         else:
@@ -142,7 +143,7 @@ class SemanticSimilarityCalculator:
             pretrained_model_name_or_path=self.model_name,
             trust_remote_code=True,
             device_map=device_map,
-            torch_dtype=torch_dtype,
+            dtype=torch_dtype,
             offload_folder=offload_folder,
         )
         print("[OK] TableLlama 模型加载完成")
@@ -218,16 +219,21 @@ class SemanticSimilarityCalculator:
             raise RuntimeError("当前未加载 embedding 模型，请将 question_table_scoring_method 设为 embedding_dot")
 
         text = self._normalize_text(text)
+
+        # 1. 先从内存级缓存找
         cache_key = self._build_embedding_cache_key(text)
         if cache_key in self._embedding_cache:
             return self._embedding_cache[cache_key]
 
+        # 2. 找不到从向量数据库找
         persisted_embedding = self._load_embedding_from_store(cache_key)
         if persisted_embedding is not None:
             self._embedding_cache[cache_key] = persisted_embedding
             return persisted_embedding
 
+        # 3. 全部未命中, 调用模型计算
         embedding = np.array(self.embeddings.embed_query(text), dtype=np.float32)
+        # 存入内存缓存和向量数据库中
         self._embedding_cache[cache_key] = embedding
         self._save_embedding_to_store(cache_key, text, embedding)
         return embedding
@@ -319,9 +325,12 @@ class SemanticSimilarityCalculator:
         if self.question_table_scoring_method == "tablellama":
             return self._compute_question_table_similarity_with_tablellama(question, table_schema)
         # 向量点积打分
+        # 1. 得到问题向量
         question_embedding = self._embed_text(question)
+        # 2. 先将schema转换为字符串, 再计算表向量
         table_description = self._format_table_description(table_schema)
         table_embedding = self._embed_text(table_description)
+        # 3. 点积
         similarity = float(np.dot(question_embedding, table_embedding))
         return similarity
 
@@ -337,89 +346,110 @@ class SemanticSimilarityCalculator:
 
     def compute_table_relationship_score(self, table1: Dict, table2: Dict) -> float:
         """计算两张表的拓扑关系强度。"""
-        # t1_cols = {col.get("column_name", "") for col in table1.get("table_columns", [])}
-        # t2_cols = {col.get("column_name", "") for col in table2.get("table_columns", [])}
-        # t1_pk = table1.get("primary_key")
-        # t2_pk = table2.get("primary_key")
-        # t1_fks = set(table1.get("foreign_keys", []))
-        # t2_fks = set(table2.get("foreign_keys", []))
+        t1_cols = {col.get("column_name", "") for col in table1.get("table_columns", [])}
+        t2_cols = {col.get("column_name", "") for col in table2.get("table_columns", [])}
+        t1_pk = table1.get("primary_key")
+        t2_pk = table2.get("primary_key")
+        t1_fks = set(table1.get("foreign_keys", []))
+        t2_fks = set(table2.get("foreign_keys", []))
 
-        # has_strong_link = False
+        has_strong_link = False
 
-        # # 1. 表1的外键连到表2的主键，并且相关字段在两张表中都真实存在。
-        # if t2_pk and (t2_pk in t1_fks) and (t2_pk in t1_cols) and (t2_pk in t2_cols):
-        #     has_strong_link = True
+        # 1. 表1的外键连到表2的主键，并且相关字段在两张表中都真实存在。
+        if t2_pk and (t2_pk in t1_fks) and (t2_pk in t1_cols) and (t2_pk in t2_cols):
+            has_strong_link = True
+        '''
+        table1 = Has_Pet
+        table2 = Student
+        Student.primary_key = student_id
+        Has_Pet.foreign_keys = ["student_id", "pet_id"] 不成立
+        '''
 
-        # # 2. 反向检查：表2的外键连到表1的主键。
-        # if t1_pk and (t1_pk in t2_fks) and (t1_pk in t2_cols) and (t1_pk in t1_cols):
-        #     has_strong_link = True
+        # 2. 反向检查：表2的外键连到表1的主键。
+        if t1_pk and (t1_pk in t2_fks) and (t1_pk in t2_cols) and (t1_pk in t1_cols):
+            has_strong_link = True
+        '''
+        table1 = Student
+        table2 = Has_Pet
+        Student.primary_key = student_id
+        Has_Pet.foreign_keys = ["student_id", "pet_id"] 反向检查成立
+        '''
 
-        # # 3. 两张表共享外键字段，常见于桥接表或中间关系表。
-        # shared_fks = (t1_fks & t2_fks) & t1_cols & t2_cols
-        # if shared_fks:
-        #     has_strong_link = True
-
-        # # 当前评分策略比较激进：有强连接直接给 1.0，否则退化为一个低底分 0.1。
-        # return 1.0 if has_strong_link else 0.1
-
-        # 下面保留的是旧版更平滑的关系打分逻辑，便于后续回溯实验：
-        def normalize_name(name: str) -> str:
-            if not name:
-                return ""
-            return name.replace("_", "").replace(" ", "").lower()
-        
-        def build_col_map(table: Dict) -> Dict[str, str]:
-            mapping = {}
-            for col in table.get("table_columns", []):
-                original = col.get("column_name", "")
-                mapping[normalize_name(original)] = original
-            return mapping
-        
-        def is_id_like(name: str) -> bool:
-            return name == "id" or name.endswith("id")
-        
-        t1_col_map = build_col_map(table1)
-        t2_col_map = build_col_map(table2)
-        t1_cols = set(t1_col_map.keys())
-        t2_cols = set(t2_col_map.keys())
-        
-        t1_pk = normalize_name(table1.get("primary_key", ""))
-        t2_pk = normalize_name(table2.get("primary_key", ""))
-        
-        raw_t1_fks = {normalize_name(col) for col in table1.get("foreign_keys", []) if col}
-        raw_t2_fks = {normalize_name(col) for col in table2.get("foreign_keys", []) if col}
-        
-        t1_fks = {col for col in raw_t1_fks if col != t1_pk}
-        t2_fks = {col for col in raw_t2_fks if col != t2_pk}
-        
-        t1_is_bridge = (not t1_pk) and len(t1_fks) >= 2
-        t2_is_bridge = (not t2_pk) and len(t2_fks) >= 2
-        
-        t1_to_t2_exact = bool(t2_pk and (t2_pk in t1_fks) and (t2_pk in t1_cols) and (t2_pk in t2_cols))
-        t2_to_t1_exact = bool(t1_pk and (t1_pk in t2_fks) and (t1_pk in t1_cols) and (t1_pk in t2_cols))
-        
-        score = 0.0
-        
-        if t1_to_t2_exact and t2_to_t1_exact:
-            score = max(score, 1.0)
-        elif t1_to_t2_exact or t2_to_t1_exact:
-            score = max(score, 0.95)
-        
-        if (t1_is_bridge and t1_to_t2_exact) or (t2_is_bridge and t2_to_t1_exact):
-            score = max(score, 0.9)
-        
+        # 3. 两张表共享外键字段，常见于桥接表或中间关系表。
         shared_fks = (t1_fks & t2_fks) & t1_cols & t2_cols
         if shared_fks:
-            if t1_is_bridge or t2_is_bridge:
-                score = max(score, 0.55)
-            else:
-                score = max(score, 0.25)
+            has_strong_link = True
+        '''
+        两张关系表都挂在同一个实体键上
+        例如：
+            Student_Course.student_id
+            Student_Club.student_id
+        或者：
+            Has_Pet.pet_id
+            Pet_Vaccination.pet_id
+        '''
+
+        # 当前评分策略比较激进：有强连接直接给 1.0，否则退化为一个低底分 0.0。
+        return 1.0 if has_strong_link else 0.0
+
+        # 下面保留的是旧版更平滑的关系打分逻辑，便于后续回溯实验：
+        # def normalize_name(name: str) -> str:
+        #     if not name:
+        #         return ""
+        #     return name.replace("_", "").replace(" ", "").lower()
         
-        shared_id_like_cols = {col for col in (t1_cols & t2_cols) if is_id_like(col)}
-        if shared_id_like_cols:
-            score = max(score, 0.12)
+        # def build_col_map(table: Dict) -> Dict[str, str]:
+        #     mapping = {}
+        #     for col in table.get("table_columns", []):
+        #         original = col.get("column_name", "")
+        #         mapping[normalize_name(original)] = original
+        #     return mapping
         
-        return score
+        # def is_id_like(name: str) -> bool:
+        #     return name == "id" or name.endswith("id")
+        
+        # t1_col_map = build_col_map(table1)
+        # t2_col_map = build_col_map(table2)
+        # t1_cols = set(t1_col_map.keys())
+        # t2_cols = set(t2_col_map.keys())
+        
+        # t1_pk = normalize_name(table1.get("primary_key", ""))
+        # t2_pk = normalize_name(table2.get("primary_key", ""))
+        
+        # raw_t1_fks = {normalize_name(col) for col in table1.get("foreign_keys", []) if col}
+        # raw_t2_fks = {normalize_name(col) for col in table2.get("foreign_keys", []) if col}
+        
+        # t1_fks = {col for col in raw_t1_fks if col != t1_pk}
+        # t2_fks = {col for col in raw_t2_fks if col != t2_pk}
+        
+        # t1_is_bridge = (not t1_pk) and len(t1_fks) >= 2
+        # t2_is_bridge = (not t2_pk) and len(t2_fks) >= 2
+        
+        # t1_to_t2_exact = bool(t2_pk and (t2_pk in t1_fks) and (t2_pk in t1_cols) and (t2_pk in t2_cols))
+        # t2_to_t1_exact = bool(t1_pk and (t1_pk in t2_fks) and (t1_pk in t1_cols) and (t1_pk in t2_cols))
+        
+        # score = 0.0
+        
+        # if t1_to_t2_exact and t2_to_t1_exact:
+        #     score = max(score, 1.0)
+        # elif t1_to_t2_exact or t2_to_t1_exact:
+        #     score = max(score, 0.95)
+        
+        # if (t1_is_bridge and t1_to_t2_exact) or (t2_is_bridge and t2_to_t1_exact):
+        #     score = max(score, 0.9)
+        
+        # shared_fks = (t1_fks & t2_fks) & t1_cols & t2_cols
+        # if shared_fks:
+        #     if t1_is_bridge or t2_is_bridge:
+        #         score = max(score, 0.55)
+        #     else:
+        #         score = max(score, 0.25)
+        
+        # shared_id_like_cols = {col for col in (t1_cols & t2_cols) if is_id_like(col)}
+        # if shared_id_like_cols:
+        #     score = max(score, 0.12)
+        
+        # return score
 
     def compute_table_relationship_score1(self, table1: Dict, table2: Dict) -> float:
         """
@@ -442,11 +472,13 @@ class SemanticSimilarityCalculator:
         if len(table1_columns) == 0 or len(table2_columns) == 0:
             column_overlap = 0.0
         else:
-            column_overlap = len(table1_columns & table2_columns) / max(len(table1_columns), len(table2_columns))
+            # column_overlap = len(table1_columns & table2_columns) / max(len(table1_columns), len(table2_columns))
+            column_overlap = 1 if table1_columns & table2_columns else 0
+
         table1_embedding = self._embed_text(table1.get("table_name", "").lower())
         table2_embedding = self._embed_text(table2.get("table_name", "").lower())
         name_similarity = float(np.dot(table1_embedding, table2_embedding))
-        return 0.7 * column_overlap + 0.3 * name_similarity
+        return 0.8 * column_overlap + 0.2 * name_similarity
 
     def compute_tables_relationships(self, tables_schemas: List[Dict]) -> Dict[Tuple[str, str], float]:
         """计算一组表中所有表对之间的关系强度。"""
